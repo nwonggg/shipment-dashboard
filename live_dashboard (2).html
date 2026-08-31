@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shipping Support Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root {
+    --teal-900: #0b3d3a; --teal-700: #0f6b62; --teal-500: #16a394; --teal-100: #e3f5f2;
+    --ink: #1c2624; --sub: #5b6b68; --paper: #f6f8f7; --line: #e2e8e6;
+    --green: #2b7a3c; --amber: #c8862b; --red: #b3432f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--paper); color: var(--ink); font-size: 14px; }
+  .shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+  aside { background: white; border-right: 1px solid var(--line); padding: 20px 14px; }
+  .logo { font-weight: 700; letter-spacing: 2px; font-size: 15px; }
+  .logo-sub { font-size: 9px; color: var(--teal-700); letter-spacing: 2px; margin-bottom: 28px; }
+  nav .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 13.5px; color: var(--sub); }
+  .nav-item.active { background: var(--teal-100); color: var(--teal-900); font-weight: 600; }
+  main { padding: 24px 32px 60px; overflow-x: auto; }
+  .topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 22px; margin: 0; }
+  .subtitle { font-size: 13px; color: var(--sub); margin-top: 2px; }
+  .btn { border: 1px solid var(--line); background: white; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .btn:hover { border-color: var(--teal-500); background: var(--teal-100); }
+  .config-toggle { font-size: 12px; color: var(--teal-700); cursor: pointer; text-decoration: underline; margin-bottom: 10px; display: inline-block; }
+  .config-box { display: none; margin-bottom: 16px; background: white; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .config-box.open { display: block; }
+  .config-box input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; margin-top: 4px; }
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
+  .stat-card { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat-label { font-size: 12px; color: var(--sub); margin-bottom: 4px; }
+  .stat-value { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+  .panel { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; }
+  .panel h2 { font-size: 14px; margin: 0 0 14px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 8px 10px; }
+  th { color: var(--sub); font-weight: 600; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+  tbody tr { border-bottom: 1px solid var(--line); }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge.warn { background: #fbf1de; color: var(--amber); }
+  .badge.err { background: #fbe6de; color: var(--red); }
+  .badge.ok { background: #e2f3e6; color: var(--green); }
+  .chart-wrap { position: relative; height: 190px; }
+  .donut-wrap { position: relative; height: 160px; }
+  .loading, .error-box, .empty-state { padding: 30px; text-align: center; color: var(--sub); font-size: 13px; }
+  .error-box { color: var(--red); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside>
+    <div class="logo">TWIST</div>
+    <div class="logo-sub">BIOSCIENCE</div>
+    <nav>
+      <div class="nav-item active">Overview</div>
+      <div class="nav-item">Shipments</div>
+      <div class="nav-item">Exceptions</div>
+    </nav>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <div>
+        <h1>Shipping Support Tracker</h1>
+        <div class="subtitle">Live data from your Shipment Dashboard Data sheet (FedEx)</div>
+      </div>
+      <div><button class="btn" id="refreshBtn">Refresh</button></div>
+    </div>
+
+    <span class="config-toggle" id="configToggle">Web App settings</span>
+    <div class="config-box" id="configBox">
+      <label style="font-size:12.5px;font-weight:600;">Apps Script Web App URL</label>
+      <input type="text" id="workerUrlInput" placeholder="https://script.google.com/macros/s/YOUR_ID/exec">
+      <div style="font-size:11.5px;color:var(--sub);margin-top:6px;">
+        Deploy WebApp.gs in your Dashboard Data Apps Script project
+        (Deploy -> New deployment -> Web app -> Execute as Me -> Anyone
+        can access), then paste the /exec URL here.
+      </div>
+    </div>
+
+    <div id="content">
+      <div class="loading">Loading...</div>
+    </div>
+  </main>
+</div>
+
+<script>
+const workerUrlInput = document.getElementById('workerUrlInput');
+const configToggle = document.getElementById('configToggle');
+const configBox = document.getElementById('configBox');
+workerUrlInput.value = localStorage.getItem('dashboardWorkerUrl') || '';
+configToggle.addEventListener('click', () => configBox.classList.toggle('open'));
+workerUrlInput.addEventListener('change', () => {
+  localStorage.setItem('dashboardWorkerUrl', workerUrlInput.value.trim());
+  loadDashboard();
+});
+if (!workerUrlInput.value) configBox.classList.add('open');
+document.getElementById('refreshBtn').addEventListener('click', loadDashboard);
+
+async function fetchSheetTab(workerUrl, tabName) {
+  const url = workerUrl.replace(/\/$/, '') + '?tab=' + encodeURIComponent(tabName);
+  const res = await fetch(url);
+  const body = await res.json();
+  if (!res.ok || body.error) {
+    throw new Error('Could not fetch "' + tabName + '": ' + (body.error || res.status));
+  }
+  return body.rows;
+}
+
+async function loadDashboard() {
+  const workerUrl = workerUrlInput.value.trim();
+  const content = document.getElementById('content');
+  if (!workerUrl) {
+    content.innerHTML = '<div class="error-box">Enter your Web App URL above first.</div>';
+    configBox.classList.add('open');
+    return;
+  }
+
+  content.innerHTML = '<div class="loading">Loading live data...</div>';
+
+  try {
+    const [shipments, snapshots] = await Promise.all([
+      fetchSheetTab(workerUrl, 'Shipments'),
+      fetchSheetTab(workerUrl, 'Daily Snapshots'),
+    ]);
+    renderDashboard(shipments, snapshots);
+  } catch (err) {
+    content.innerHTML = '<div class="error-box">' + err.message + '</div>';
+  }
+}
+
+function renderDashboard(shipments, snapshots) {
+  const content = document.getElementById('content');
+  if (shipments.length === 0) {
+    content.innerHTML = '<div class="empty-state">No shipments in the sheet yet. Run a sync first.</div>';
+    return;
+  }
+
+  const total = shipments.length;
+  const flagged = shipments.filter(s => s['Needs Attention'] === 'TRUE');
+  const delivered = shipments.filter(s => s['Delivered Date']);
+  const noDelay = total - flagged.length;
+  const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
+
+  content.innerHTML = `
+    <div class="stats">
+      <div class="stat-card"><div class="stat-label">Shipments Analyzed</div><div class="stat-value">${total}</div></div>
+      <div class="stat-card"><div class="stat-label">No Delays</div><div class="stat-value">${noDelay}</div></div>
+      <div class="stat-card"><div class="stat-label">Open Exceptions</div><div class="stat-value">${flagged.length}</div></div>
+      <div class="stat-card"><div class="stat-label">At-Risk Deliveries</div><div class="stat-value">${atRisk.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Delivered</div><div class="stat-value">${delivered.length}</div></div>
+    </div>
+
+    <div class="row2">
+      <div class="panel">
+        <h2>Carrier Comparison</h2>
+        <table>
+          <thead><tr><th>Carrier</th><th>Shipments</th><th>Exceptions</th><th>Exception Rate</th></tr></thead>
+          <tbody id="carrierTableBody"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Aging of Delays</h2>
+        <div class="donut-wrap"><canvas id="agingChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Trend (Total Shipments &amp; Exceptions)</h2>
+      <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+    </div>
+
+    <div class="panel">
+      <h2>Exception Shipments (${flagged.length})</h2>
+      <table>
+        <thead><tr><th>Tracking Number</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Exception Type</th></tr></thead>
+        <tbody id="exceptionsTableBody"></tbody>
+      </table>
+    </div>
+  `;
+
+  // ---- Carrier comparison ----
+  const byCarrier = {};
+  shipments.forEach(s => {
+    const c = s['Carrier'] || 'Unknown';
+    if (!byCarrier[c]) byCarrier[c] = { total: 0, exceptions: 0 };
+    byCarrier[c].total++;
+    if (s['Needs Attention'] === 'TRUE') byCarrier[c].exceptions++;
+  });
+  const carrierBody = document.getElementById('carrierTableBody');
+  Object.keys(byCarrier).forEach(c => {
+    const stats = byCarrier[c];
+    const rate = stats.total > 0 ? ((stats.exceptions / stats.total) * 100).toFixed(1) : '0.0';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${c}</td><td>${stats.total}</td><td>${stats.exceptions}</td><td>${rate}%</td>`;
+    carrierBody.appendChild(tr);
+  });
+
+  // ---- Exceptions table ----
+  const excBody = document.getElementById('exceptionsTableBody');
+  flagged.slice(0, 50).forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s['Tracking Number'] || ''}</td><td>${s['Q-order'] || ''}</td><td>${s['Destination'] || ''}</td>
+      <td>${s['Status'] || ''}</td><td>${s['Days Delayed'] || 0}</td><td>${s['Exception Type'] || ''}</td>`;
+    excBody.appendChild(tr);
+  });
+
+  // ---- Aging donut ----
+  const onTime = total - flagged.length;
+  const d1to2 = shipments.filter(s => (s['Days Delayed'] || 0) >= 1 && (s['Days Delayed'] || 0) <= 2).length;
+  const d3to5 = shipments.filter(s => (s['Days Delayed'] || 0) >= 3 && (s['Days Delayed'] || 0) <= 5).length;
+  const d6plus = shipments.filter(s => (s['Days Delayed'] || 0) >= 6).length;
+
+  new Chart(document.getElementById('agingChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['On Time', '1-2 Days', '3-5 Days', '6+ Days'],
+      datasets: [{ data: [onTime, d1to2, d3to5, d6plus], backgroundColor: ['#2b7a3c', '#c8862b', '#e2895a', '#b3432f'], borderColor: '#fff', borderWidth: 2 }],
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10.5 } } } } },
+  });
+
+  // ---- Trend chart from Daily Snapshots ----
+  const byDate = {};
+  snapshots.forEach(s => {
+    const key = s['Date'] || 'Unknown';
+    if (!byDate[key]) byDate[key] = { total: 0, exceptions: 0 };
+    byDate[key].total += Number(s['Total Shipments']) || 0;
+    byDate[key].exceptions += Number(s['Exceptions']) || 0;
+  });
+  const dates = Object.keys(byDate).sort();
+
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [
+        { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3 },
+        { label: 'Exceptions', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3 },
+      ],
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { y: { beginAtZero: true } } },
+  });
+}
+
+loadDashboard();
+</script>
+
+</body>
+</html>
