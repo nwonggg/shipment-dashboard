@@ -162,7 +162,7 @@ function renderDashboard(shipments, snapshots) {
   }
 
   const total = shipments.length;
-  const flagged = shipments.filter(s => s['Needs Attention'] === 'TRUE');
+  const flagged = shipments.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
   const delivered = shipments.filter(s => s['Delivered Date']);
   const noDelay = total - flagged.length;
   const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
@@ -209,7 +209,7 @@ function renderDashboard(shipments, snapshots) {
     const c = s['Carrier'] || 'Unknown';
     if (!byCarrier[c]) byCarrier[c] = { total: 0, exceptions: 0 };
     byCarrier[c].total++;
-    if (s['Needs Attention'] === 'TRUE') byCarrier[c].exceptions++;
+    if (s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE') byCarrier[c].exceptions++;
   });
   const carrierBody = document.getElementById('carrierTableBody');
   Object.keys(byCarrier).forEach(c => {
