@@ -19,6 +19,7 @@
   .logo-sub { font-size: 9px; color: var(--teal-700); letter-spacing: 2px; margin-bottom: 28px; }
   nav .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 13.5px; color: var(--sub); }
   .nav-item.active { background: var(--teal-100); color: var(--teal-900); font-weight: 600; }
+  nav .nav-item { cursor: pointer; }
   main { padding: 24px 32px 60px; overflow-x: auto; }
   .topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
   h1 { font-size: 22px; margin: 0; }
@@ -81,9 +82,9 @@
     <div class="logo">TWIST</div>
     <div class="logo-sub">BIOSCIENCE</div>
     <nav>
-      <div class="nav-item active">Overview</div>
-      <div class="nav-item">Shipments</div>
-      <div class="nav-item">Exceptions</div>
+      <div class="nav-item active" data-view="overview">Overview</div>
+      <div class="nav-item" data-view="shipments">Shipments</div>
+      <div class="nav-item" data-view="exceptions">Exceptions</div>
     </nav>
   </aside>
 
@@ -157,6 +158,8 @@
     <div id="content">
       <div class="loading">Loading...</div>
     </div>
+    <div id="shipmentsView" style="display:none;"></div>
+    <div id="exceptionsView" style="display:none;"></div>
   </main>
 </div>
 
@@ -547,6 +550,88 @@ searchInput.addEventListener('input', () => {
     showDetailPanel('Search results for "' + searchInput.value.trim() + '"', matches);
   }, 200);
 });
+
+// ---- Sidebar view switching (Overview / Shipments / Exceptions) ----
+// This is a single-page app that fetches everything once, so
+// "different pages" are implemented as client-side view swaps
+// rather than real page navigation - instant, no reload, and no
+// extra hosting/routing needed. Data already sitting in
+// allShipmentsCache is reused, not re-fetched.
+const PAGE_SIZE = 50;
+let shipmentsPage = 0;
+let exceptionsPage = 0;
+
+function switchView(view) {
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
+  document.getElementById('content').style.display = view === 'overview' ? '' : 'none';
+  document.getElementById('shipmentsView').style.display = view === 'shipments' ? '' : 'none';
+  document.getElementById('exceptionsView').style.display = view === 'exceptions' ? '' : 'none';
+  hideDetailPanel();
+
+  if (view === 'shipments') { shipmentsPage = 0; renderShipmentsView(); }
+  if (view === 'exceptions') { exceptionsPage = 0; renderExceptionsView(); }
+}
+
+document.querySelector('nav').addEventListener('click', (e) => {
+  const item = e.target.closest('.nav-item');
+  if (item && item.dataset.view) switchView(item.dataset.view);
+});
+
+function renderShipmentsView() {
+  renderPaginatedView('shipmentsView', allShipmentsCache, shipmentsPage, 'All Shipments',
+    (p) => { shipmentsPage = p; renderShipmentsView(); });
+}
+
+function renderExceptionsView() {
+  const flagged = allShipmentsCache.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
+  renderPaginatedView('exceptionsView', flagged, exceptionsPage, 'All Exceptions',
+    (p) => { exceptionsPage = p; renderExceptionsView(); });
+}
+
+function renderPaginatedView(containerId, list, page, title, onPageChange) {
+  const container = document.getElementById(containerId);
+  if (list.length === 0) {
+    container.innerHTML = `<div class="panel"><h2>${title}</h2><div class="empty-state">Nothing here yet.</div></div>`;
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const start = safePage * PAGE_SIZE;
+  const pageRows = list.slice(start, start + PAGE_SIZE);
+
+  container.innerHTML = `
+    <div class="panel">
+      <h2>${title} (${list.length})</h2>
+      <table>
+        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Exception Type</th></tr></thead>
+        <tbody id="${containerId}TableBody"></tbody>
+      </table>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:12.5px;color:var(--sub);">
+        <span>Showing ${start + 1}-${Math.min(start + PAGE_SIZE, list.length)} of ${list.length}</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn" id="${containerId}PrevBtn" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
+          <span>Page ${safePage + 1} of ${totalPages}</span>
+          <button class="btn" id="${containerId}NextBtn" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const body = document.getElementById(containerId + 'TableBody');
+  pageRows.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = detailRow(s);
+    body.appendChild(tr);
+  });
+
+  document.getElementById(containerId + 'PrevBtn').addEventListener('click', () => {
+    if (safePage > 0) onPageChange(safePage - 1);
+  });
+  document.getElementById(containerId + 'NextBtn').addEventListener('click', () => {
+    if (safePage < totalPages - 1) onPageChange(safePage + 1);
+  });
+}
 
 function renderDashboard(shipments, snapshots) {
   const content = document.getElementById('content');
