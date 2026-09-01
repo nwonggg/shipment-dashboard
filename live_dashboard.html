@@ -706,7 +706,6 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
   const ownersAvailable = [...new Set(allShipmentsCache.map(s => s['Owner']).filter(Boolean))].sort();
   const filtered = applyListFilters(baseList, filters);
   const sorted = sortList(filtered, filters.sortCol, filters.sortDir);
-  const showCustom = filters.preset === 'custom';
   const container = document.getElementById(containerId);
 
   container.innerHTML = `
@@ -723,15 +722,16 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
             <option value="custom" ${filters.preset === 'custom' ? 'selected' : ''}>Custom Range</option>
           </select>
         </div>
-        ${showCustom ? `
-        <div>
-          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">From</label>
-          <input type="date" id="${containerId}_from" value="${filters.from || ''}" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
+        <div id="${containerId}_customDates" style="display:${filters.preset === 'custom' ? 'flex' : 'none'};gap:18px;">
+          <div>
+            <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">From</label>
+            <input type="date" id="${containerId}_from" value="${filters.from || ''}" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">To</label>
+            <input type="date" id="${containerId}_to" value="${filters.to || ''}" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
+          </div>
         </div>
-        <div>
-          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">To</label>
-          <input type="date" id="${containerId}_to" value="${filters.to || ''}" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
-        </div>` : ''}
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Carrier</label>
           <div style="display:flex;gap:12px;">
@@ -758,7 +758,8 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
             ${ownersAvailable.map(o => `<option value="${o}" ${filters.owner === o ? 'selected' : ''}>${o}</option>`).join('')}
           </select>
         </div>
-        <div style="margin-left:auto;">
+        <div style="margin-left:auto;display:flex;gap:10px;">
+          <button class="btn" id="${containerId}_applyBtn" style="background:var(--teal-700);color:white;border-color:var(--teal-700);">Apply Filters</button>
           <button class="btn" id="${containerId}_exportBtn">Download CSV</button>
         </div>
       </div>
@@ -766,31 +767,43 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
     <div id="${containerId}_tableArea"></div>
   `;
 
+  // Controls below only STAGE changes onto the filters object - they
+  // don't touch the table. The table only updates when "Apply
+  // Filters" is clicked, so you can set up several filters together
+  // (date range + carrier + status, etc.) before anything changes.
+  // The one exception is the date-range preset dropdown, which needs
+  // to reveal/hide the custom From/To fields immediately for the
+  // controls themselves to make sense - that's a pure UI toggle and
+  // doesn't touch the table either.
   document.getElementById(containerId + '_preset').addEventListener('change', (e) => {
     filters.preset = e.target.value;
-    onFilterChange();
+    document.getElementById(containerId + '_customDates').style.display = filters.preset === 'custom' ? 'flex' : 'none';
   });
-  if (showCustom) {
-    document.getElementById(containerId + '_from').addEventListener('change', (e) => { filters.from = e.target.value; onFilterChange(); });
-    document.getElementById(containerId + '_to').addEventListener('change', (e) => { filters.to = e.target.value; onFilterChange(); });
-  }
+  document.getElementById(containerId + '_from').addEventListener('change', (e) => { filters.from = e.target.value; });
+  document.getElementById(containerId + '_to').addEventListener('change', (e) => { filters.to = e.target.value; });
   document.querySelectorAll('.' + containerId + '_carrierCb').forEach(cb => {
     cb.addEventListener('change', () => {
       const checked = Array.from(document.querySelectorAll('.' + containerId + '_carrierCb:checked')).map(el => el.value);
       filters.carriers = checked.length === carriersAvailable.length ? null : new Set(checked);
-      onFilterChange();
     });
   });
   document.getElementById(containerId + '_status').addEventListener('change', (e) => {
     filters.status = e.target.value;
-    onFilterChange();
   });
   document.getElementById(containerId + '_owner').addEventListener('change', (e) => {
     filters.owner = e.target.value;
-    onFilterChange();
   });
+  document.getElementById(containerId + '_applyBtn').addEventListener('click', onFilterChange);
+
+  // Computed fresh at click time from the live `filters` object, not
+  // from the `sorted` list captured when this panel last rendered -
+  // so Download CSV reflects whatever's currently selected in the
+  // controls, even if "Apply Filters" hasn't been clicked yet. This
+  // is intentionally independent from the Apply gate on the table.
   document.getElementById(containerId + '_exportBtn').addEventListener('click', () => {
-    exportListToCsv(sorted, filterKey);
+    const currentFiltered = applyListFilters(baseList, filters);
+    const currentSorted = sortList(currentFiltered, filters.sortCol, filters.sortDir);
+    exportListToCsv(currentSorted, filterKey);
   });
 
   renderPaginatedView(containerId + '_tableArea', sorted, page, title, onPageChange,
