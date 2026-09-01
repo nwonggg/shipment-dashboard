@@ -915,19 +915,43 @@ function renderFollowupsView() {
  * plus a client-side CSV export (no server round-trip needed - built
  * from data already loaded).
  */
+function getDeliveriesByDay() {
+  const map = {};
+  allShipmentsCache.forEach(s => {
+    const raw = s['Delivered Date'];
+    if (!raw) return;
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return;
+    const key = d.getTime();
+    const carrier = s['Carrier'] || 'Unknown';
+    if (!map[key]) map[key] = { dateLabel: raw, dateObj: d, carriers: {} };
+    map[key].carriers[carrier] = (map[key].carriers[carrier] || 0) + 1;
+  });
+  return Object.values(map).sort((a, b) => b.dateObj - a.dateObj);
+}
+
 function renderReportsView() {
   const container = document.getElementById('reportsView');
-  if (snapshotsCache.length === 0) {
-    container.innerHTML = '<div class="panel"><h2>Reports</h2><div class="empty-state">No snapshot history yet.</div></div>';
-    return;
-  }
 
-  const sorted = snapshotsCache.slice().sort((a, b) => (b['Date'] || '').localeCompare(a['Date'] || ''));
+  const carriers = [...new Set(allShipmentsCache.map(s => s['Carrier'] || 'Unknown'))].sort();
+  const deliveriesByDay = getDeliveriesByDay();
+
+  const snapshotSection = snapshotsCache.length === 0
+    ? '<div class="empty-state">No snapshot history yet.</div>'
+    : (() => {
+        const sorted = snapshotsCache.slice().sort((a, b) => (b['Date'] || '').localeCompare(a['Date'] || ''));
+        return `
+          <table>
+            <thead><tr><th>Date</th><th>Carrier</th><th>Total Shipments</th><th>Delivered</th><th>Exceptions</th><th>On-Time Rate</th></tr></thead>
+            <tbody id="reportsTableBody"></tbody>
+          </table>
+        `;
+      })();
 
   container.innerHTML = `
-    <div class="panel">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
-        <h2 style="margin:0;">Daily Snapshot History (${sorted.length})</h2>
+    <div class="panel" style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:10px;">
+        <h2 style="margin:0;">Deliveries by Day (${deliveriesByDay.length} days)</h2>
         <div style="display:flex;align-items:center;gap:12px;">
           <button class="icon-btn" id="generateEmailsBtn" title="Generate carrier exception emails as Gmail drafts">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -937,15 +961,60 @@ function renderReportsView() {
             Generate Carrier Emails
           </button>
           <span class="upload-status" id="emailStatus"></span>
-          <button class="btn" id="downloadReportBtn">Download CSV</button>
+          <button class="btn" id="downloadDeliveriesBtn">Download CSV</button>
         </div>
       </div>
+      <div style="font-size:11.5px;color:var(--sub);margin-bottom:12px;">
+        Counted from each shipment's own Delivered Date - a true daily
+        count, not a snapshot of total sheet size like the table below.
+        Covers all history already in the sheet, not just future syncs.
+      </div>
       <table>
-        <thead><tr><th>Date</th><th>Carrier</th><th>Total Shipments</th><th>Delivered</th><th>Exceptions</th><th>On-Time Rate</th></tr></thead>
-        <tbody id="reportsTableBody"></tbody>
+        <thead><tr><th>Date</th>${carriers.map(c => `<th>${c}</th>`).join('')}<th>Total</th></tr></thead>
+        <tbody id="deliveriesByDayTableBody"></tbody>
       </table>
     </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+        <h2 style="margin:0;">Daily Snapshot History</h2>
+        <button class="btn" id="downloadReportBtn">Download CSV</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--sub);margin-bottom:12px;">
+        Reflects total sheet size at the moment each sync ran, not
+        daily volume - useful for tracking exceptions/on-time rate
+        over time, less useful for "how many delivered on day X" (use
+        the table above for that instead).
+      </div>
+      ${snapshotSection}
+    </div>
   `;
+
+  // ---- Deliveries by Day table body ----
+  const dbdBody = document.getElementById('deliveriesByDayTableBody');
+  deliveriesByDay.forEach(row => {
+    const total = Object.values(row.carriers).reduce((a, b) => a + b, 0);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${row.dateLabel}</td>${carriers.map(c => `<td>${row.carriers[c] || 0}</td>`).join('')}<td><strong>${total}</strong></td>`;
+    dbdBody.appendChild(tr);
+  });
+
+  document.getElementById('downloadDeliveriesBtn').addEventListener('click', () => {
+    const headers = ['Date', ...carriers, 'Total'];
+    const csvRows = [headers.join(',')].concat(
+      deliveriesByDay.map(row => {
+        const total = Object.values(row.carriers).reduce((a, b) => a + b, 0);
+        return [row.dateLabel, ...carriers.map(c => row.carriers[c] || 0), total].map(v => `"${v}"`).join(',');
+      })
+    );
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'deliveries-by-day-' + Utilities_formatDateISO(new Date()) + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
 
   document.getElementById('generateEmailsBtn').addEventListener('click', () => {
     const workerUrl = workerUrlInput.value.trim();
@@ -963,27 +1032,31 @@ function renderReportsView() {
     emailForm.submit();
   });
 
-  const body = document.getElementById('reportsTableBody');
-  sorted.forEach(s => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${s['Date'] || ''}</td><td>${s['Carrier'] || ''}</td><td>${s['Total Shipments'] || 0}</td>
-      <td>${s['Delivered'] || 0}</td><td>${s['Exceptions'] || 0}</td><td>${s['On-Time Rate (%)'] || 0}%</td>`;
-    body.appendChild(tr);
-  });
+  const sorted = snapshotsCache.slice().sort((a, b) => (b['Date'] || '').localeCompare(a['Date'] || ''));
 
-  document.getElementById('downloadReportBtn').addEventListener('click', () => {
-    const headers = ['Date', 'Carrier', 'Total Shipments', 'Delivered', 'Exceptions', 'On-Time Rate (%)'];
-    const csvRows = [headers.join(',')].concat(
-      sorted.map(s => headers.map(h => `"${(s[h] ?? '').toString().replace(/"/g, '""')}"`).join(','))
-    );
-    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'shipment-snapshots-' + Utilities_formatDateISO(new Date()) + '.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  });
+  if (snapshotsCache.length > 0) {
+    const body = document.getElementById('reportsTableBody');
+    sorted.forEach(s => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${s['Date'] || ''}</td><td>${s['Carrier'] || ''}</td><td>${s['Total Shipments'] || 0}</td>
+        <td>${s['Delivered'] || 0}</td><td>${s['Exceptions'] || 0}</td><td>${s['On-Time Rate (%)'] || 0}%</td>`;
+      body.appendChild(tr);
+    });
+
+    document.getElementById('downloadReportBtn').addEventListener('click', () => {
+      const headers = ['Date', 'Carrier', 'Total Shipments', 'Delivered', 'Exceptions', 'On-Time Rate (%)'];
+      const csvRows = [headers.join(',')].concat(
+        sorted.map(s => headers.map(h => `"${(s[h] ?? '').toString().replace(/"/g, '""')}"`).join(','))
+      );
+      const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'shipment-snapshots-' + Utilities_formatDateISO(new Date()) + '.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
 }
 
 // Small local helper since Google's Utilities.formatDate isn't
