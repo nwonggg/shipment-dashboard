@@ -88,6 +88,7 @@
             <input type="file" id="csvFileInput" accept=".csv" style="display:none;">
           </label>
         </div>
+        <div><button class="btn" id="generateEmailsBtn">Generate Carrier Emails</button></div>
         <div class="upload-status" id="uploadStatus"></div>
         <div class="last-updated" id="lastUpdated" style="margin-left:auto;">Checking last update...</div>
       </div>
@@ -95,6 +96,9 @@
 
     <form id="uploadForm" method="POST" target="uploadFrame" style="display:none;">
       <input type="hidden" name="csvData" id="csvDataField">
+    </form>
+    <form id="emailForm" method="POST" target="uploadFrame" style="display:none;">
+      <input type="hidden" name="action" value="generateEmails">
     </form>
     <iframe name="uploadFrame" id="uploadFrame" style="display:none;"></iframe>
 
@@ -138,12 +142,61 @@ let uploadFrameReady = false; // ignore the iframe's initial blank-page load eve
 
 uploadFrame.addEventListener('load', () => {
   if (!uploadFrameReady) { uploadFrameReady = true; return; }
+
+  // Previously this handler never actually read the iframe's response -
+  // it just showed a generic "Processing complete" message regardless
+  // of what happened. Now it parses the JSON the server embedded in
+  // the iframe's #result element, so errors show real messages and
+  // the two different actions (CSV upload vs email draft generation)
+  // get their own appropriate feedback.
+  let result = null;
+  try {
+    const resultDiv = uploadFrame.contentDocument.getElementById('result');
+    if (resultDiv) result = JSON.parse(resultDiv.dataset.result);
+  } catch (err) {
+    // fall through to generic handling below if parsing fails
+  }
+
+  if (result && result.success === false) {
+    uploadStatus.textContent = 'Error: ' + result.error;
+    uploadStatus.className = 'upload-status err';
+    return;
+  }
+
+  if (result && result.type === 'emailDrafts') {
+    if (result.draftsCreated === 0) {
+      uploadStatus.textContent = 'No open exceptions right now - nothing to draft.';
+      uploadStatus.className = 'upload-status ok';
+      return;
+    }
+    const summary = result.carriers.map(c => c.carrier + ': ' + c.count).join(', ');
+    uploadStatus.textContent = result.draftsCreated + ' draft(s) created in Gmail (' + summary + ') - check your Drafts folder.';
+    uploadStatus.className = 'upload-status ok';
+    return;
+  }
+
+  // Default: CSV upload path
   uploadStatus.textContent = 'Processing complete - refreshing...';
   uploadStatus.className = 'upload-status ok';
   setTimeout(() => {
     loadDashboard();
     loadLastUpdated();
   }, 800);
+});
+
+document.getElementById('generateEmailsBtn').addEventListener('click', () => {
+  const workerUrl = workerUrlInput.value.trim();
+  if (!workerUrl) {
+    uploadStatus.textContent = 'Set your Web App URL first (see Web App settings below).';
+    uploadStatus.className = 'upload-status err';
+    configBox.classList.add('open');
+    return;
+  }
+  uploadStatus.textContent = 'Generating carrier email drafts...';
+  uploadStatus.className = 'upload-status';
+  const emailForm = document.getElementById('emailForm');
+  emailForm.action = workerUrl;
+  emailForm.submit();
 });
 
 csvFileInput.addEventListener('change', () => {
@@ -260,6 +313,78 @@ async function loadDashboard() {
   }
 }
 
+/**
+ * ============================================================
+ * AI SUMMARY PANEL (rule-based, no API calls / no cost)
+ * ============================================================
+ * Turns the same stats already computed for the KPI cards, Carrier
+ * Comparison table, and Aging donut into a short plain-English
+ * paragraph, instead of a live Claude API call. Fully deterministic
+ * and free - the tradeoff is it reads a bit more templated than a
+ * real generated summary would, since it's built from fixed
+ * sentence patterns rather than genuinely composed text.
+ * ============================================================
+ */
+function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
+  const exceptionRate = total > 0 ? ((flagged.length / total) * 100).toFixed(1) : '0.0';
+  const carriers = Object.keys(byCarrier);
+
+  const sentences = [];
+
+  sentences.push(
+    `${total.toLocaleString()} shipments tracked${carriers.length > 1 ? ' across ' + carriers.join(' and ') : ''}, ` +
+    `with ${flagged.length} open exception${flagged.length === 1 ? '' : 's'} (${exceptionRate}%) needing follow-up.`
+  );
+
+  if (carriers.length > 1) {
+    // Compare carriers by absolute exception count and separately by
+    // rate, since the carrier with more total exceptions isn't
+    // always the one with the worse rate - worth calling out both
+    // rather than picking one framing that could mislead.
+    const sorted = carriers.slice().sort((a, b) => byCarrier[b].exceptions - byCarrier[a].exceptions);
+    const most = sorted[0];
+    const rates = {};
+    carriers.forEach(c => { rates[c] = byCarrier[c].total > 0 ? (byCarrier[c].exceptions / byCarrier[c].total) : 0; });
+    const worstRateCarrier = carriers.slice().sort((a, b) => rates[b] - rates[a])[0];
+
+    if (most === worstRateCarrier) {
+      sentences.push(
+        `${most} has both the most open exceptions (${byCarrier[most].exceptions}) and the highest exception rate ` +
+        `(${(rates[most] * 100).toFixed(1)}%) of the carriers tracked.`
+      );
+    } else {
+      const countList = sorted.map(c => `${c}: ${byCarrier[c].exceptions}`).join(', ');
+      sentences.push(
+        `${most} has the most open exceptions in absolute terms (${countList}), though ${worstRateCarrier} has the ` +
+        `higher exception rate at ${(rates[worstRateCarrier] * 100).toFixed(1)}%.`
+      );
+    }
+  }
+
+  if (aging.d6plus > 0) {
+    sentences.push(
+      `${aging.d6plus} shipment${aging.d6plus === 1 ? ' has' : 's have'} been delayed 6+ days and ` +
+      `${aging.d6plus === 1 ? 'is' : 'are'} the highest priority to resolve.`
+    );
+  } else if (aging.d3to5 > 0) {
+    sentences.push(
+      `The oldest open exceptions are in the 3-5 day range (${aging.d3to5} shipment${aging.d3to5 === 1 ? '' : 's'}) ` +
+      `- nothing has been open 6+ days yet.`
+    );
+  } else if (flagged.length > 0) {
+    sentences.push(`All open exceptions are still fairly recent - none have been open more than 2 days.`);
+  }
+
+  if (atRisk.length > 0) {
+    sentences.push(
+      `${atRisk.length} shipment${atRisk.length === 1 ? ' is' : 's are'} at risk of missing their expected delivery ` +
+      `date if not addressed soon.`
+    );
+  }
+
+  return sentences.join(' ');
+}
+
 function renderDashboard(shipments, snapshots) {
   const content = document.getElementById('content');
   if (shipments.length === 0) {
@@ -287,6 +412,11 @@ function renderDashboard(shipments, snapshots) {
       <div class="stat-card"><div class="stat-label">Open Exceptions</div><div class="stat-value">${flagged.length}</div></div>
       <div class="stat-card"><div class="stat-label">At-Risk Deliveries</div><div class="stat-value">${atRisk.length}</div></div>
       <div class="stat-card"><div class="stat-label">Delivered</div><div class="stat-value">${delivered.length}</div></div>
+    </div>
+
+    <div class="panel" id="summaryPanel">
+      <h2>Summary</h2>
+      <div id="summaryText" style="font-size:13.5px;line-height:1.6;color:var(--ink);"></div>
     </div>
 
     <div class="row2">
@@ -334,6 +464,22 @@ function renderDashboard(shipments, snapshots) {
     carrierBody.appendChild(tr);
   });
 
+  // ---- Aging buckets (computed once here, used by both the Summary
+  // text below and the donut chart later) ----
+  // Every bucket is derived from the SAME `flagged` set used for
+  // "On Time", so onTime + 1-2 + 3-5 + 6+ always sums to exactly
+  // `total`, and every flagged shipment - date-based or exception-
+  // based - is accounted for somewhere, instead of some vanishing
+  // when their accrued Days Delayed happens to be 0.
+  const onTime = total - flagged.length;
+  const flaggedDays = flagged.map(s => Number(s['Days Delayed']) || 0);
+  const d1to2 = flaggedDays.filter(d => d <= 2).length;
+  const d3to5 = flaggedDays.filter(d => d >= 3 && d <= 5).length;
+  const d6plus = flaggedDays.filter(d => d >= 6).length;
+
+  document.getElementById('summaryText').innerHTML =
+    buildSummaryText(total, flagged, atRisk, byCarrier, { onTime, d1to2, d3to5, d6plus });
+
   // ---- Exceptions table ----
   const excBody = document.getElementById('exceptionsTableBody');
   flagged.slice(0, 50).forEach(s => {
@@ -344,28 +490,6 @@ function renderDashboard(shipments, snapshots) {
   });
 
   // ---- Aging donut ----
-  // FIX: buckets used to be computed from ALL shipments filtered by
-  // Days Delayed, while "On Time" was computed from the separate
-  // `flagged` set. That mismatch meant exception-flagged shipments
-  // with Days Delayed === 0 (e.g. a fresh carrier-reported exception
-  // with no accrued date-based delay yet) were excluded from BOTH
-  // "On Time" and every delay bucket - they just vanished from the
-  // chart, making it look like almost nothing was delayed even when
-  // the Exception Shipments table below showed real open exceptions.
-  //
-  // Now every bucket is derived from the SAME `flagged` set used for
-  // "On Time", so onTime + 1-2 + 3-5 + 6+ always sums to exactly
-  // `total`, and every flagged shipment - date-based or exception-
-  // based - shows up somewhere on the chart. Flagged shipments with
-  // 0 accrued days delayed are grouped into the 1-2 Days bucket
-  // rather than dropped, since they're still an open exception, not
-  // an on-time shipment.
-  const onTime = total - flagged.length;
-  const flaggedDays = flagged.map(s => Number(s['Days Delayed']) || 0);
-  const d1to2 = flaggedDays.filter(d => d <= 2).length;
-  const d3to5 = flaggedDays.filter(d => d >= 3 && d <= 5).length;
-  const d6plus = flaggedDays.filter(d => d >= 6).length;
-
   new Chart(document.getElementById('agingChart'), {
     type: 'doughnut',
     data: {
