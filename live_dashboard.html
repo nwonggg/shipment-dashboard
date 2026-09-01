@@ -37,7 +37,9 @@
   .config-box.open { display: block; }
   .config-box input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; margin-top: 4px; }
   .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
-  .stat-card { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat-card { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; cursor: pointer; transition: background-color 0.15s, border-color 0.15s; }
+  .stat-card:hover { background: var(--teal-100); border-color: var(--teal-500); }
+  .stat-card.active { background: var(--teal-100); border-color: var(--teal-500); box-shadow: inset 0 0 0 1px var(--teal-500); }
   .stat-label { font-size: 12px; color: var(--sub); margin-bottom: 4px; }
   .stat-value { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
   .panel { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; }
@@ -55,6 +57,21 @@
   .donut-wrap { position: relative; height: 160px; }
   .loading, .error-box, .empty-state { padding: 30px; text-align: center; color: var(--sub); font-size: 13px; }
   .error-box { color: var(--red); }
+  /* Carrier logo badges - real UPS/FedEx logo artwork is trademarked
+     and can't be reproduced here. These are brand-colored initials
+     as a stand-in; swap in <img> tags with real logo files if you
+     have licensed assets - see the carrierLogoBadge() function. */
+  .carrier-logo-badge { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 5px; font-size: 9px; font-weight: 700; color: white; margin-right: 8px; vertical-align: middle; }
+  .carrier-name-cell { display: flex; align-items: center; }
+  /* Icon button (used for the Gmail compose action) - a generic
+     envelope icon, not Google's trademarked Gmail "M" glyph. */
+  .icon-btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: white; padding: 7px 14px 7px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .icon-btn:hover { border-color: var(--teal-500); background: var(--teal-100); }
+  .search-panel { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px; margin-bottom: 16px; }
+  .search-panel input { width: 100%; max-width: 420px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+  .upload-step2 { display: none; align-items: center; gap: 10px; }
+  .upload-step2.visible { display: flex; }
+  .file-chosen { font-size: 12.5px; color: var(--sub); }
 </style>
 </head>
 <body>
@@ -84,14 +101,30 @@
       <div class="upload-row">
         <div>
           <label class="btn" style="cursor:pointer;">
-            Upload New CSV
+            Choose CSV
             <input type="file" id="csvFileInput" accept=".csv" style="display:none;">
           </label>
         </div>
-        <div><button class="btn" id="generateEmailsBtn">Generate Carrier Emails</button></div>
+        <div class="upload-step2" id="uploadStep2">
+          <span class="file-chosen" id="fileChosenName"></span>
+          <button class="btn" id="submitCsvBtn">Submit</button>
+        </div>
+        <div>
+          <button class="icon-btn" id="generateEmailsBtn" title="Generate carrier exception emails as Gmail drafts">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="4" width="20" height="16" rx="2" stroke="#b3432f" stroke-width="1.8"/>
+              <path d="M3 6L12 13L21 6" stroke="#b3432f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Generate Carrier Emails
+          </button>
+        </div>
         <div class="upload-status" id="uploadStatus"></div>
         <div class="last-updated" id="lastUpdated" style="margin-left:auto;">Checking last update...</div>
       </div>
+    </div>
+
+    <div class="search-panel">
+      <input type="text" id="searchInput" placeholder="Search by tracking number or Q-order...">
     </div>
 
     <form id="uploadForm" method="POST" target="uploadFrame" style="display:none;">
@@ -111,6 +144,14 @@
         (Deploy -> New deployment -> Web app -> Execute as Me -> Anyone
         can access), then paste the /exec URL here.
       </div>
+    </div>
+
+    <div class="panel" id="detailPanel" style="display:none;">
+      <h2 id="detailPanelTitle"></h2>
+      <table>
+        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Exception Type</th></tr></thead>
+        <tbody id="detailTableBody"></tbody>
+      </table>
     </div>
 
     <div id="content">
@@ -200,6 +241,19 @@ document.getElementById('generateEmailsBtn').addEventListener('click', () => {
 });
 
 csvFileInput.addEventListener('change', () => {
+  const file = csvFileInput.files[0];
+  const step2 = document.getElementById('uploadStep2');
+  const fileChosenName = document.getElementById('fileChosenName');
+  if (!file) {
+    step2.classList.remove('visible');
+    return;
+  }
+  fileChosenName.textContent = file.name;
+  step2.classList.add('visible');
+  uploadStatus.textContent = '';
+});
+
+document.getElementById('submitCsvBtn').addEventListener('click', () => {
   const workerUrl = workerUrlInput.value.trim();
   if (!workerUrl) {
     uploadStatus.textContent = 'Set your Web App URL first (see Web App settings below).';
@@ -219,6 +273,8 @@ csvFileInput.addEventListener('change', () => {
     uploadForm.action = workerUrl;
     uploadStatus.textContent = 'Uploading and processing (may take a moment for large files)...';
     uploadForm.submit();
+    document.getElementById('uploadStep2').classList.remove('visible');
+    csvFileInput.value = '';
   };
   reader.onerror = () => {
     uploadStatus.textContent = 'Could not read that file.';
@@ -331,9 +387,11 @@ function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
 
   const sentences = [];
 
+  const b = (val) => `<strong>${val}</strong>`;
+
   sentences.push(
-    `${total.toLocaleString()} shipments tracked${carriers.length > 1 ? ' across ' + carriers.join(' and ') : ''}, ` +
-    `with ${flagged.length} open exception${flagged.length === 1 ? '' : 's'} (${exceptionRate}%) needing follow-up.`
+    `${b(total.toLocaleString())} shipments tracked${carriers.length > 1 ? ' across ' + carriers.join(' and ') : ''}, ` +
+    `with ${b(flagged.length)} open exception${flagged.length === 1 ? '' : 's'} (${b(exceptionRate + '%')}) needing follow-up.`
   );
 
   if (carriers.length > 1) {
@@ -349,26 +407,26 @@ function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
 
     if (most === worstRateCarrier) {
       sentences.push(
-        `${most} has both the most open exceptions (${byCarrier[most].exceptions}) and the highest exception rate ` +
-        `(${(rates[most] * 100).toFixed(1)}%) of the carriers tracked.`
+        `${most} has both the most open exceptions (${b(byCarrier[most].exceptions)}) and the highest exception rate ` +
+        `(${b((rates[most] * 100).toFixed(1) + '%')}) of the carriers tracked.`
       );
     } else {
-      const countList = sorted.map(c => `${c}: ${byCarrier[c].exceptions}`).join(', ');
+      const countList = sorted.map(c => `${c}: ${b(byCarrier[c].exceptions)}`).join(', ');
       sentences.push(
         `${most} has the most open exceptions in absolute terms (${countList}), though ${worstRateCarrier} has the ` +
-        `higher exception rate at ${(rates[worstRateCarrier] * 100).toFixed(1)}%.`
+        `higher exception rate at ${b((rates[worstRateCarrier] * 100).toFixed(1) + '%')}.`
       );
     }
   }
 
   if (aging.d6plus > 0) {
     sentences.push(
-      `${aging.d6plus} shipment${aging.d6plus === 1 ? ' has' : 's have'} been delayed 6+ days and ` +
+      `${b(aging.d6plus)} shipment${aging.d6plus === 1 ? ' has' : 's have'} been delayed 6+ days and ` +
       `${aging.d6plus === 1 ? 'is' : 'are'} the highest priority to resolve.`
     );
   } else if (aging.d3to5 > 0) {
     sentences.push(
-      `The oldest open exceptions are in the 3-5 day range (${aging.d3to5} shipment${aging.d3to5 === 1 ? '' : 's'}) ` +
+      `The oldest open exceptions are in the 3-5 day range (${b(aging.d3to5)} shipment${aging.d3to5 === 1 ? '' : 's'}) ` +
       `- nothing has been open 6+ days yet.`
     );
   } else if (flagged.length > 0) {
@@ -377,13 +435,118 @@ function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
 
   if (atRisk.length > 0) {
     sentences.push(
-      `${atRisk.length} shipment${atRisk.length === 1 ? ' is' : 's are'} at risk of missing their expected delivery ` +
+      `${b(atRisk.length)} shipment${atRisk.length === 1 ? ' is' : 's are'} at risk of missing their expected delivery ` +
       `date if not addressed soon.`
     );
   }
 
-  return sentences.join(' ');
+  return '<ul style="margin:0;padding-left:20px;">' + sentences.map(s => `<li style="margin-bottom:6px;">${s}</li>`).join('') + '</ul>';
 }
+
+/**
+ * Brand-colored initials badge as a stand-in for a real carrier
+ * logo image. Actual UPS/FedEx logo artwork is trademarked and
+ * isn't something that can be reproduced here - if you have
+ * licensed logo image files, swap the returned span for something
+ * like <img src="/logos/ups.png" class="carrier-logo-badge"> per
+ * carrier instead.
+ */
+function carrierLogoBadge(carrier) {
+  const colors = {
+    'UPS': '#5b3a1a',
+    'FedEx': '#4d148c',
+    'DHL': '#ffcc00',
+  };
+  const textColors = { 'DHL': '#d40511' };
+  const bg = colors[carrier] || '#5b6b68';
+  const fg = textColors[carrier] || 'white';
+  const initials = carrier.length <= 4 ? carrier.toUpperCase() : carrier.slice(0, 2).toUpperCase();
+  return `<span class="carrier-logo-badge" style="background:${bg};color:${fg};">${initials}</span>`;
+}
+
+// Holds the last full shipments list loaded, so stat-card clicks and
+// search can filter against it without re-fetching.
+let allShipmentsCache = [];
+
+function detailRow(s) {
+  return `<td>${s['Tracking Number'] || ''}</td><td>${s['Carrier'] || ''}</td><td>${s['Q-order'] || ''}</td>
+    <td>${s['Destination'] || ''}</td><td>${s['Status'] || ''}</td><td>${s['Days Delayed'] || 0}</td><td>${s['Exception Type'] || ''}</td>`;
+}
+
+function showDetailPanel(title, list) {
+  const panel = document.getElementById('detailPanel');
+  const body = document.getElementById('detailTableBody');
+  document.getElementById('detailPanelTitle').textContent = title + ' (' + list.length + ')';
+  body.innerHTML = '';
+  list.slice(0, 200).forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = detailRow(s);
+    body.appendChild(tr);
+  });
+  panel.style.display = 'block';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function hideDetailPanel() {
+  document.getElementById('detailPanel').style.display = 'none';
+  document.querySelectorAll('.stat-card.active').forEach(el => el.classList.remove('active'));
+}
+
+// Event delegation on the stats grid, since stat-card elements get
+// recreated on every render (their innerHTML is rebuilt from
+// scratch), so listeners attached directly to them would be lost.
+document.getElementById('content').addEventListener('click', (e) => {
+  const card = e.target.closest('.stat-card');
+  if (!card) return;
+  const filterKey = card.dataset.filter;
+  if (!filterKey) return;
+
+  const alreadyActive = card.classList.contains('active');
+  document.querySelectorAll('.stat-card.active').forEach(el => el.classList.remove('active'));
+
+  if (alreadyActive) {
+    hideDetailPanel();
+    return;
+  }
+  card.classList.add('active');
+
+  const total = allShipmentsCache.length;
+  const flagged = allShipmentsCache.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
+  const delivered = allShipmentsCache.filter(s => s['Delivered Date']);
+  const noDelay = allShipmentsCache.filter(s => !(s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE'));
+  const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
+
+  const filters = {
+    total: { title: 'All Shipments', list: allShipmentsCache },
+    noDelay: { title: 'No Delays', list: noDelay },
+    exceptions: { title: 'Open Exceptions', list: flagged },
+    atRisk: { title: 'At-Risk Deliveries', list: atRisk },
+    delivered: { title: 'Delivered', list: delivered },
+  };
+  const chosen = filters[filterKey];
+  if (chosen) showDetailPanel(chosen.title, chosen.list);
+});
+
+// ---- Search by tracking number or Q-order ----
+const searchInput = document.getElementById('searchInput');
+let searchDebounce = null;
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => {
+    const query = searchInput.value.trim().toLowerCase();
+    document.querySelectorAll('.stat-card.active').forEach(el => el.classList.remove('active'));
+    if (!query) {
+      hideDetailPanel();
+      return;
+    }
+    const matches = allShipmentsCache.filter(s => {
+      const tracking = (s['Tracking Number'] || '').toString().toLowerCase();
+      const qorder = (s['Q-order'] || '').toString().toLowerCase();
+      return tracking.includes(query) || qorder.includes(query);
+    });
+    showDetailPanel('Search results for "' + searchInput.value.trim() + '"', matches);
+  }, 200);
+});
 
 function renderDashboard(shipments, snapshots) {
   const content = document.getElementById('content');
@@ -398,6 +561,8 @@ function renderDashboard(shipments, snapshots) {
   const noDelay = total - flagged.length;
   const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
 
+  allShipmentsCache = shipments;
+
   // ---- Dynamic subtitle: lists whichever carriers are actually in
   // the data, instead of a hardcoded "(FedEx)" that goes stale the
   // moment a second carrier is added. ----
@@ -407,11 +572,11 @@ function renderDashboard(shipments, snapshots) {
 
   content.innerHTML = `
     <div class="stats">
-      <div class="stat-card"><div class="stat-label">Shipments Analyzed</div><div class="stat-value">${total}</div></div>
-      <div class="stat-card"><div class="stat-label">No Delays</div><div class="stat-value">${noDelay}</div></div>
-      <div class="stat-card"><div class="stat-label">Open Exceptions</div><div class="stat-value">${flagged.length}</div></div>
-      <div class="stat-card"><div class="stat-label">At-Risk Deliveries</div><div class="stat-value">${atRisk.length}</div></div>
-      <div class="stat-card"><div class="stat-label">Delivered</div><div class="stat-value">${delivered.length}</div></div>
+      <div class="stat-card" data-filter="total" title="Click to see all shipments"><div class="stat-label">Shipments Analyzed</div><div class="stat-value">${total}</div></div>
+      <div class="stat-card" data-filter="noDelay" title="Click to see shipments with no delays"><div class="stat-label">No Delays</div><div class="stat-value">${noDelay}</div></div>
+      <div class="stat-card" data-filter="exceptions" title="Click to see open exceptions"><div class="stat-label">Open Exceptions</div><div class="stat-value">${flagged.length}</div></div>
+      <div class="stat-card" data-filter="atRisk" title="Click to see at-risk deliveries"><div class="stat-label">At-Risk Deliveries</div><div class="stat-value">${atRisk.length}</div></div>
+      <div class="stat-card" data-filter="delivered" title="Click to see delivered shipments"><div class="stat-label">Delivered</div><div class="stat-value">${delivered.length}</div></div>
     </div>
 
     <div class="panel" id="summaryPanel">
@@ -460,7 +625,7 @@ function renderDashboard(shipments, snapshots) {
     const stats = byCarrier[c];
     const rate = stats.total > 0 ? ((stats.exceptions / stats.total) * 100).toFixed(1) : '0.0';
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${c}</td><td>${stats.total}</td><td>${stats.exceptions}</td><td>${rate}%</td>`;
+    tr.innerHTML = `<td><div class="carrier-name-cell">${carrierLogoBadge(c)}${c}</div></td><td>${stats.total}</td><td>${stats.exceptions}</td><td>${rate}%</td>`;
     carrierBody.appendChild(tr);
   });
 
