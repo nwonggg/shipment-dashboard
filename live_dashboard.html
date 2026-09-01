@@ -501,6 +501,13 @@ function hideDetailPanel() {
 // recreated on every render (their innerHTML is rebuilt from
 // scratch), so listeners attached directly to them would be lost.
 document.getElementById('content').addEventListener('click', (e) => {
+  const pill = e.target.closest('.time-pill');
+  if (pill) {
+    overviewTimeFilter = pill.dataset.preset;
+    renderOverviewContent();
+    return;
+  }
+
   const card = e.target.closest('.stat-card');
   if (!card) return;
 
@@ -524,14 +531,17 @@ document.getElementById('content').addEventListener('click', (e) => {
   }
   card.classList.add('active');
 
-  const total = allShipmentsCache.length;
-  const flagged = allShipmentsCache.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
-  const delivered = allShipmentsCache.filter(s => s['Delivered Date']);
-  const noDelay = allShipmentsCache.filter(s => !(s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE'));
+  // Use the same time-filtered set the KPI cards themselves are
+  // showing counts for, so the popup matches what's on the card.
+  const filteredShipments = getOverviewFilteredShipments();
+  const total = filteredShipments.length;
+  const flagged = filteredShipments.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
+  const delivered = filteredShipments.filter(s => s['Delivered Date']);
+  const noDelay = filteredShipments.filter(s => !(s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE'));
   const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
 
   const filters = {
-    total: { title: 'All Shipments', list: allShipmentsCache },
+    total: { title: 'All Shipments', list: filteredShipments },
     noDelay: { title: 'No Delays', list: noDelay },
     exceptions: { title: 'Open Exceptions', list: flagged },
     atRisk: { title: 'At-Risk Deliveries', list: atRisk },
@@ -628,6 +638,10 @@ function getDateRangeBounds(filters) {
     const f = new Date(today); f.setDate(f.getDate() - 6);
     return { from: f, to: today };
   }
+  if (filters.preset === 'last14') {
+    const f = new Date(today); f.setDate(f.getDate() - 13);
+    return { from: f, to: today };
+  }
   if (filters.preset === 'last30') {
     const f = new Date(today); f.setDate(f.getDate() - 29);
     return { from: f, to: today };
@@ -636,6 +650,27 @@ function getDateRangeBounds(filters) {
     return { from: parseISODateLocal(filters.from), to: parseISODateLocal(filters.to) };
   }
   return { from: null, to: null }; // 'all'
+}
+
+// Overview's own time-frame selector - simpler than the Shipments/
+// Exceptions/Follow-Ups filter bar (just one click, no Apply step),
+// since it's a single quick selector rather than several fields
+// being configured together.
+let overviewTimeFilter = 'all';
+
+function getOverviewFilteredShipments() {
+  const { from, to } = getDateRangeBounds({ preset: overviewTimeFilter });
+  if (!from && !to) return allShipmentsCache;
+  return allShipmentsCache.filter(s => {
+    const d = parseShipDate(s);
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to) {
+      const toEnd = new Date(to); toEnd.setHours(23, 59, 59, 999);
+      if (d > toEnd) return false;
+    }
+    return true;
+  });
 }
 
 function applyListFilters(list, filters) {
@@ -1025,30 +1060,75 @@ function renderDashboard(shipments, snapshots) {
     return;
   }
 
-  const total = shipments.length;
-  const flagged = shipments.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
-  const delivered = shipments.filter(s => s['Delivered Date']);
-  const noDelay = total - flagged.length;
-  const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
-
   allShipmentsCache = shipments;
   snapshotsCache = snapshots;
 
   // ---- Dynamic subtitle: lists whichever carriers are actually in
   // the data, instead of a hardcoded "(FedEx)" that goes stale the
-  // moment a second carrier is added. ----
+  // moment a second carrier is added. Always based on the FULL
+  // dataset, not the current time-frame selection, since "which
+  // carriers do we ship with" shouldn't disappear just because
+  // nothing shipped today. ----
   const carriersPresent = [...new Set(shipments.map(s => s['Carrier'] || 'Unknown'))].sort();
   document.getElementById('subtitleText').textContent =
     'Live data from your Shipment Dashboard Data sheet (' + carriersPresent.join(' + ') + ')';
 
+  renderOverviewContent();
+}
+
+const TIME_FRAME_PILLS = [
+  { key: 'all', label: 'All Time' },
+  { key: 'today', label: 'Today' },
+  { key: 'last7', label: 'Last 7 Days' },
+  { key: 'last14', label: 'Last 14 Days' },
+  { key: 'last30', label: 'Last 30 Days' },
+];
+
+/**
+ * Renders (and re-renders on time-frame pill clicks) everything on
+ * the Overview page EXCEPT the subtitle - stat cards, Summary,
+ * Carrier Comparison, Aging donut, and the Exceptions preview table
+ * all recompute from whatever time frame is currently selected.
+ * Applies instantly on click since it's one quick selector, not
+ * several fields to configure together like the dedicated list
+ * views' filter bars.
+ *
+ * The Trend chart is intentionally NOT re-filtered by this - it
+ * already visualizes change over time on its own x-axis, so slicing
+ * it down to "Last 7 Days" would mostly just remove context rather
+ * than add clarity.
+ */
+function renderOverviewContent() {
+  const content = document.getElementById('content');
+  const shipments = getOverviewFilteredShipments();
+  const snapshots = snapshotsCache;
+
+  const total = shipments.length;
+  const flagged = shipments.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
+  const delivered = shipments.filter(s => s['Delivered Date']);
+  const noDelay = total - flagged.length;
+  const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
+  const followupsInFrame = shipments.filter(s =>
+    (s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE') && !s['Next Action']
+  );
+
   content.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;padding:12px 18px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <span style="font-size:11px;color:var(--sub);margin-right:4px;">TIME FRAME:</span>
+        ${TIME_FRAME_PILLS.map(p => `
+          <button class="time-pill" data-preset="${p.key}" style="padding:6px 14px;border-radius:20px;border:1px solid ${overviewTimeFilter === p.key ? 'var(--teal-700)' : 'var(--line)'};background:${overviewTimeFilter === p.key ? 'var(--teal-700)' : 'white'};color:${overviewTimeFilter === p.key ? 'white' : 'var(--ink)'};font-size:12.5px;font-weight:${overviewTimeFilter === p.key ? '600' : '400'};cursor:pointer;">${p.label}</button>
+        `).join('')}
+      </div>
+    </div>
+
     <div class="stats">
       <div class="stat-card" data-filter="total" title="Click to see all shipments"><div class="stat-label">Shipments Analyzed</div><div class="stat-value">${total}</div></div>
       <div class="stat-card" data-filter="noDelay" title="Click to see shipments with no delays"><div class="stat-label">No Delays</div><div class="stat-value">${noDelay}</div></div>
       <div class="stat-card" data-filter="exceptions" title="Click to see open exceptions"><div class="stat-label">Open Exceptions</div><div class="stat-value">${flagged.length}</div></div>
       <div class="stat-card" data-filter="atRisk" title="Click to see at-risk deliveries"><div class="stat-label">At-Risk Deliveries</div><div class="stat-value">${atRisk.length}</div></div>
       <div class="stat-card" data-filter="delivered" title="Click to see delivered shipments"><div class="stat-label">Delivered</div><div class="stat-value">${delivered.length}</div></div>
-      <div class="stat-card" id="followupsStatCard" title="Click to view Follow-Ups"><div class="stat-label">Follow-Ups Needed Today</div><div class="stat-value">${getFollowupsNeeded().length}</div></div>
+      <div class="stat-card" id="followupsStatCard" title="Click to view Follow-Ups"><div class="stat-label">Follow-Ups Needed Today</div><div class="stat-value">${followupsInFrame.length}</div></div>
     </div>
 
     <div class="panel" id="summaryPanel">
