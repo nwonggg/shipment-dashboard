@@ -553,7 +553,23 @@ searchInput.addEventListener('input', () => {
       hideDetailPanel();
       return;
     }
-    const matches = allShipmentsCache.filter(s => {
+
+    // Search now respects whichever list view is currently active -
+    // e.g. searching while on the Shipments page with "Last 7 Days"
+    // selected only searches within that filtered set, not everything.
+    // On Overview it still searches the full dataset, since there's
+    // no active list-view filter to respect there.
+    let basePool = allShipmentsCache;
+    if (currentActiveView === 'shipments') {
+      basePool = applyListFilters(allShipmentsCache, viewFilters.shipments);
+    } else if (currentActiveView === 'exceptions') {
+      const flagged = allShipmentsCache.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
+      basePool = applyListFilters(flagged, viewFilters.exceptions);
+    } else if (currentActiveView === 'followups') {
+      basePool = applyListFilters(getFollowupsNeeded(), viewFilters.followups);
+    }
+
+    const matches = basePool.filter(s => {
       const tracking = (s['Tracking Number'] || '').toString().toLowerCase();
       const qorder = (s['Q-order'] || '').toString().toLowerCase();
       return tracking.includes(query) || qorder.includes(query);
@@ -574,7 +590,226 @@ let exceptionsPage = 0;
 let followupsPage = 0;
 let snapshotsCache = [];
 
+// Per-view filter state (date range + carrier selection). Filters by
+// Ship Date since that's the most natural "when did this happen" field
+// for an operator browsing shipments. carriers: null means "all".
+let viewFilters = {
+  shipments: { preset: 'all', from: '', to: '', carriers: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
+  exceptions: { preset: 'all', from: '', to: '', carriers: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
+  followups: { preset: 'all', from: '', to: '', carriers: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
+};
+
+function parseShipDate(s) {
+  const raw = s['Ship Date'];
+  if (!raw) return null;
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Parses a <input type="date"> value ("YYYY-MM-DD") as a LOCAL date,
+// not UTC - new Date("YYYY-MM-DD") parses as UTC midnight in most
+// browsers, which can be off by a day compared to locally-parsed Ship
+// Dates elsewhere in this file. Splitting and constructing manually
+// avoids that mismatch.
+function parseISODateLocal(str) {
+  if (!str) return null;
+  const parts = str.split('-').map(Number);
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
+function getDateRangeBounds(filters) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (filters.preset === 'today') return { from: today, to: today };
+  if (filters.preset === 'yesterday') {
+    const y = new Date(today); y.setDate(y.getDate() - 1);
+    return { from: y, to: y };
+  }
+  if (filters.preset === 'last7') {
+    const f = new Date(today); f.setDate(f.getDate() - 6);
+    return { from: f, to: today };
+  }
+  if (filters.preset === 'last30') {
+    const f = new Date(today); f.setDate(f.getDate() - 29);
+    return { from: f, to: today };
+  }
+  if (filters.preset === 'custom') {
+    return { from: parseISODateLocal(filters.from), to: parseISODateLocal(filters.to) };
+  }
+  return { from: null, to: null }; // 'all'
+}
+
+function applyListFilters(list, filters) {
+  let result = list;
+  const { from, to } = getDateRangeBounds(filters);
+  if (from || to) {
+    result = result.filter(s => {
+      const d = parseShipDate(s);
+      if (!d) return false;
+      if (from && d < from) return false;
+      if (to) {
+        const toEnd = new Date(to); toEnd.setHours(23, 59, 59, 999);
+        if (d > toEnd) return false;
+      }
+      return true;
+    });
+  }
+  if (filters.carriers) {
+    result = result.filter(s => filters.carriers.has(s['Carrier']));
+  }
+  if (filters.status) {
+    result = result.filter(s => s['Status'] === filters.status);
+  }
+  if (filters.owner === '__unassigned__') {
+    result = result.filter(s => !s['Owner']);
+  } else if (filters.owner) {
+    result = result.filter(s => s['Owner'] === filters.owner);
+  }
+  return result;
+}
+
+function sortList(list, col, dir) {
+  if (!col) return list;
+  const numeric = col === 'Days Delayed';
+  const sorted = list.slice().sort((a, b) => {
+    if (numeric) {
+      return (Number(a[col]) || 0) - (Number(b[col]) || 0);
+    }
+    return (a[col] || '').toString().localeCompare((b[col] || '').toString());
+  });
+  return dir === 'desc' ? sorted.reverse() : sorted;
+}
+
+function exportListToCsv(list, filenamePrefix) {
+  const headers = ['Tracking Number', 'Carrier', 'Q-order', 'Destination', 'Status', 'Days Delayed', 'Issue Type', 'Next Action', 'Owner'];
+  const rows = [headers.join(',')].concat(
+    list.map(s => headers.map(h => `"${(s[h] ?? '').toString().replace(/"/g, '""')}"`).join(','))
+  );
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filenamePrefix + '-' + Utilities_formatDateISO(new Date()) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Renders a filter bar (date range + carrier checkboxes) into
+ * `containerId`, then renders the filtered, paginated table into a
+ * sub-container beneath it. Shared by Shipments, Exceptions, and
+ * Follow-Ups since they're all the same kind of filterable list.
+ */
+function renderFilterableView(containerId, filterKey, baseList, page, title, onPageChange, onFilterChange) {
+  const filters = viewFilters[filterKey];
+  const carriersAvailable = [...new Set(allShipmentsCache.map(s => s['Carrier'] || 'Unknown'))].sort();
+  const statusesAvailable = [...new Set(allShipmentsCache.map(s => s['Status']).filter(Boolean))].sort();
+  const ownersAvailable = [...new Set(allShipmentsCache.map(s => s['Owner']).filter(Boolean))].sort();
+  const filtered = applyListFilters(baseList, filters);
+  const sorted = sortList(filtered, filters.sortCol, filters.sortDir);
+  const showCustom = filters.preset === 'custom';
+  const container = document.getElementById(containerId);
+
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:14px;">
+      <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end;">
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Date Range (by Ship Date)</label>
+          <select id="${containerId}_preset" style="padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
+            <option value="all" ${filters.preset === 'all' ? 'selected' : ''}>All Time</option>
+            <option value="today" ${filters.preset === 'today' ? 'selected' : ''}>Today</option>
+            <option value="yesterday" ${filters.preset === 'yesterday' ? 'selected' : ''}>Yesterday</option>
+            <option value="last7" ${filters.preset === 'last7' ? 'selected' : ''}>Last 7 Days</option>
+            <option value="last30" ${filters.preset === 'last30' ? 'selected' : ''}>Last 30 Days</option>
+            <option value="custom" ${filters.preset === 'custom' ? 'selected' : ''}>Custom Range</option>
+          </select>
+        </div>
+        ${showCustom ? `
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">From</label>
+          <input type="date" id="${containerId}_from" value="${filters.from || ''}" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">To</label>
+          <input type="date" id="${containerId}_to" value="${filters.to || ''}" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
+        </div>` : ''}
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Carrier</label>
+          <div style="display:flex;gap:12px;">
+            ${carriersAvailable.map(c => `
+              <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                <input type="checkbox" class="${containerId}_carrierCb" value="${c}" ${!filters.carriers || filters.carriers.has(c) ? 'checked' : ''}>
+                ${c}
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Status</label>
+          <select id="${containerId}_status" style="padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
+            <option value="">All Statuses</option>
+            ${statusesAvailable.map(st => `<option value="${st}" ${filters.status === st ? 'selected' : ''}>${st}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Owner</label>
+          <select id="${containerId}_owner" style="padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
+            <option value="">All Owners</option>
+            <option value="__unassigned__" ${filters.owner === '__unassigned__' ? 'selected' : ''}>Unassigned</option>
+            ${ownersAvailable.map(o => `<option value="${o}" ${filters.owner === o ? 'selected' : ''}>${o}</option>`).join('')}
+          </select>
+        </div>
+        <div style="margin-left:auto;">
+          <button class="btn" id="${containerId}_exportBtn">Download CSV</button>
+        </div>
+      </div>
+    </div>
+    <div id="${containerId}_tableArea"></div>
+  `;
+
+  document.getElementById(containerId + '_preset').addEventListener('change', (e) => {
+    filters.preset = e.target.value;
+    onFilterChange();
+  });
+  if (showCustom) {
+    document.getElementById(containerId + '_from').addEventListener('change', (e) => { filters.from = e.target.value; onFilterChange(); });
+    document.getElementById(containerId + '_to').addEventListener('change', (e) => { filters.to = e.target.value; onFilterChange(); });
+  }
+  document.querySelectorAll('.' + containerId + '_carrierCb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = Array.from(document.querySelectorAll('.' + containerId + '_carrierCb:checked')).map(el => el.value);
+      filters.carriers = checked.length === carriersAvailable.length ? null : new Set(checked);
+      onFilterChange();
+    });
+  });
+  document.getElementById(containerId + '_status').addEventListener('change', (e) => {
+    filters.status = e.target.value;
+    onFilterChange();
+  });
+  document.getElementById(containerId + '_owner').addEventListener('change', (e) => {
+    filters.owner = e.target.value;
+    onFilterChange();
+  });
+  document.getElementById(containerId + '_exportBtn').addEventListener('click', () => {
+    exportListToCsv(sorted, filterKey);
+  });
+
+  renderPaginatedView(containerId + '_tableArea', sorted, page, title, onPageChange,
+    { col: filters.sortCol, dir: filters.sortDir },
+    (field) => {
+      if (filters.sortCol === field) {
+        filters.sortDir = filters.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        filters.sortCol = field;
+        filters.sortDir = 'asc';
+      }
+      onFilterChange();
+    });
+}
+
+let currentActiveView = 'overview';
+
 function switchView(view) {
+  currentActiveView = view;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
   document.getElementById('content').style.display = view === 'overview' ? '' : 'none';
   document.getElementById('shipmentsView').style.display = view === 'shipments' ? '' : 'none';
@@ -595,14 +830,16 @@ document.querySelector('nav').addEventListener('click', (e) => {
 });
 
 function renderShipmentsView() {
-  renderPaginatedView('shipmentsView', allShipmentsCache, shipmentsPage, 'All Shipments',
-    (p) => { shipmentsPage = p; renderShipmentsView(); });
+  renderFilterableView('shipmentsView', 'shipments', allShipmentsCache, shipmentsPage, 'All Shipments',
+    (p) => { shipmentsPage = p; renderShipmentsView(); },
+    () => { shipmentsPage = 0; renderShipmentsView(); });
 }
 
 function renderExceptionsView() {
   const flagged = allShipmentsCache.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
-  renderPaginatedView('exceptionsView', flagged, exceptionsPage, 'All Exceptions',
-    (p) => { exceptionsPage = p; renderExceptionsView(); });
+  renderFilterableView('exceptionsView', 'exceptions', flagged, exceptionsPage, 'All Exceptions',
+    (p) => { exceptionsPage = p; renderExceptionsView(); },
+    () => { exceptionsPage = 0; renderExceptionsView(); });
 }
 
 /**
@@ -620,8 +857,9 @@ function getFollowupsNeeded() {
 }
 
 function renderFollowupsView() {
-  renderPaginatedView('followupsView', getFollowupsNeeded(), followupsPage, 'Follow-Ups Needed',
-    (p) => { followupsPage = p; renderFollowupsView(); });
+  renderFilterableView('followupsView', 'followups', getFollowupsNeeded(), followupsPage, 'Follow-Ups Needed',
+    (p) => { followupsPage = p; renderFollowupsView(); },
+    () => { followupsPage = 0; renderFollowupsView(); });
 }
 
 /**
@@ -707,7 +945,7 @@ function Utilities_formatDateISO(d) {
   return d.toISOString().slice(0, 10);
 }
 
-function renderPaginatedView(containerId, list, page, title, onPageChange) {
+function renderPaginatedView(containerId, list, page, title, onPageChange, sortState, onSortClick) {
   const container = document.getElementById(containerId);
   if (list.length === 0) {
     container.innerHTML = `<div class="panel"><h2>${title}</h2><div class="empty-state">Nothing here yet.</div></div>`;
@@ -719,11 +957,19 @@ function renderPaginatedView(containerId, list, page, title, onPageChange) {
   const start = safePage * PAGE_SIZE;
   const pageRows = list.slice(start, start + PAGE_SIZE);
 
+  const columns = ['Tracking Number', 'Carrier', 'Q-order', 'Destination', 'Status', 'Days Delayed', 'Issue Type', 'Next Action', 'Owner'];
+  const th = (field) => {
+    const arrow = sortState && sortState.col === field ? (sortState.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
+    return onSortClick
+      ? `<th data-sort-field="${field}" style="cursor:pointer;user-select:none;">${field}${arrow}</th>`
+      : `<th>${field}</th>`;
+  };
+
   container.innerHTML = `
     <div class="panel">
       <h2>${title} (${list.length})</h2>
       <table>
-        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th></tr></thead>
+        <thead><tr>${columns.map(th).join('')}</tr></thead>
         <tbody id="${containerId}TableBody"></tbody>
       </table>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:12.5px;color:var(--sub);">
@@ -750,6 +996,13 @@ function renderPaginatedView(containerId, list, page, title, onPageChange) {
   document.getElementById(containerId + 'NextBtn').addEventListener('click', () => {
     if (safePage < totalPages - 1) onPageChange(safePage + 1);
   });
+
+  if (onSortClick) {
+    container.querySelector('thead tr').addEventListener('click', (e) => {
+      const th = e.target.closest('th');
+      if (th && th.dataset.sortField) onSortClick(th.dataset.sortField);
+    });
+  }
 }
 
 function renderDashboard(shipments, snapshots) {
