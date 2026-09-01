@@ -8,13 +8,25 @@
 <style>
   :root {
     --teal-900: #0b3d3a; --teal-700: #0f6b62; --teal-500: #16a394; --teal-100: #e3f5f2;
-    --ink: #1c2624; --sub: #5b6b68; --paper: #f6f8f7; --line: #e2e8e6;
+    --ink: #1c2624; --sub: #5b6b68; --paper: #f6f8f7; --line: #e2e8e6; --surface: #ffffff;
     --green: #2b7a3c; --amber: #c8862b; --red: #b3432f;
+  }
+  body.dark {
+    --teal-100: #143430; --ink: #e7ece9; --sub: #93a19d; --paper: #10201d;
+    --line: #2b3d39; --surface: #182927;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--paper); color: var(--ink); font-size: 14px; }
-  .shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-  aside { background: white; border-right: 1px solid var(--line); padding: 20px 14px; }
+  .shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; position: relative; transition: grid-template-columns 0.2s ease; }
+  .shell.sidebar-collapsed { grid-template-columns: 0px 1fr; }
+  aside { background: var(--surface); border-right: 1px solid var(--line); padding: 20px 14px; overflow: hidden; white-space: nowrap; transition: padding 0.2s ease; }
+  .shell.sidebar-collapsed aside { padding: 20px 0; border-right: none; }
+  #sidebarToggle { position: absolute; top: 22px; left: 220px; transform: translateX(-50%); width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center; z-index: 20; transition: left 0.2s ease; color: var(--sub); }
+  #sidebarToggle:hover { border-color: var(--teal-500); color: var(--teal-700); }
+  .shell.sidebar-collapsed #sidebarToggle { left: 0px; }
+  .theme-toggle { width: 46px; height: 26px; border-radius: 20px; border: none; background: var(--teal-700); position: relative; cursor: pointer; padding: 0; flex-shrink: 0; transition: background 0.2s ease; }
+  .theme-toggle-knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: white; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--teal-700); transition: left 0.2s ease; }
+  body.dark .theme-toggle-knob { left: 23px; }
   .logo { font-weight: 700; letter-spacing: 2px; font-size: 15px; }
   .logo-sub { font-size: 9px; color: var(--teal-700); letter-spacing: 2px; margin-bottom: 28px; }
   nav .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 13.5px; color: var(--sub); }
@@ -24,26 +36,26 @@
   .topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
   h1 { font-size: 22px; margin: 0; }
   .subtitle { font-size: 13px; color: var(--sub); margin-top: 2px; }
-  .btn { border: 1px solid var(--line); background: white; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .btn { border: 1px solid var(--line); background: var(--surface); padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
   .btn:hover { border-color: var(--teal-500); background: var(--teal-100); }
   .config-toggle { font-size: 12px; color: var(--teal-700); cursor: pointer; text-decoration: underline; margin-bottom: 10px; display: inline-block; }
-  .upload-panel { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; }
+  .upload-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; }
   .upload-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .last-updated { font-size: 12.5px; color: var(--sub); }
   .last-updated b { color: var(--ink); }
   .upload-status { font-size: 12.5px; }
   .upload-status.ok { color: var(--green); }
   .upload-status.err { color: var(--red); }
-  .config-box { display: none; margin-bottom: 16px; background: white; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .config-box { display: none; margin-bottom: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
   .config-box.open { display: block; }
   .config-box input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; margin-top: 4px; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 20px; }
-  .stat-card { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; cursor: pointer; transition: background-color 0.15s, border-color 0.15s; }
+  .stat-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; cursor: pointer; transition: background-color 0.15s, border-color 0.15s; }
   .stat-card:hover { background: var(--teal-100); border-color: var(--teal-500); }
   .stat-card.active { background: var(--teal-100); border-color: var(--teal-500); box-shadow: inset 0 0 0 1px var(--teal-500); }
   .stat-label { font-size: 12px; color: var(--sub); margin-bottom: 4px; }
   .stat-value { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
-  .panel { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; }
   .panel h2 { font-size: 14px; margin: 0 0 14px; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -66,9 +78,9 @@
   .carrier-name-cell { display: flex; align-items: center; }
   /* Icon button (used for the Gmail compose action) - a generic
      envelope icon, not Google's trademarked Gmail "M" glyph. */
-  .icon-btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: white; padding: 7px 14px 7px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .icon-btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--surface); padding: 7px 14px 7px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
   .icon-btn:hover { border-color: var(--teal-500); background: var(--teal-100); }
-  .search-panel { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px; margin-bottom: 16px; }
+  .search-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px; margin-bottom: 16px; }
   .search-panel input { width: 100%; max-width: 420px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
   .upload-step2 { display: none; align-items: center; gap: 10px; }
   .upload-step2.visible { display: flex; }
@@ -77,8 +89,8 @@
 </head>
 <body>
 
-<div class="shell">
-  <aside>
+<div class="shell" id="shell">
+  <aside id="sidebar">
     <div class="logo">TWIST</div>
     <div class="logo-sub">BIOSCIENCE</div>
     <nav>
@@ -89,6 +101,7 @@
       <div class="nav-item" data-view="reports">Reports</div>
     </nav>
   </aside>
+  <button id="sidebarToggle" title="Collapse sidebar">&#8249;</button>
 
   <main>
     <div class="topbar">
@@ -97,7 +110,12 @@
         <!-- Carrier list is now filled in dynamically once data loads (see renderDashboard), instead of being hardcoded as "(FedEx)" -->
         <div class="subtitle" id="subtitleText">Live data from your Shipment Dashboard Data sheet</div>
       </div>
-      <div><button class="btn" id="refreshBtn">Refresh</button></div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">
+          <span class="theme-toggle-knob" id="themeToggleKnob">&#9728;</span>
+        </button>
+        <button class="btn" id="refreshBtn">Refresh</button>
+      </div>
     </div>
 
     <div class="upload-panel">
@@ -500,6 +518,43 @@ function hideDetailPanel() {
 // Event delegation on the stats grid, since stat-card elements get
 // recreated on every render (their innerHTML is rebuilt from
 // scratch), so listeners attached directly to them would be lost.
+let overviewDetailPage = 0;
+let overviewDetailActiveKey = null;
+
+/**
+ * Replaces the Overview widgets (Summary, Carrier Comparison, Aging
+ * donut, Trend, Exceptions preview) with a filtered table in the same
+ * spot, rather than appending a separate panel elsewhere on the page
+ * - avoids the jarring "two different things visible, page jumps
+ * around" experience of the old floating detail panel approach.
+ */
+function showOverviewDetail(filterKey, title, list) {
+  overviewDetailActiveKey = filterKey;
+  overviewDetailPage = 0;
+  document.getElementById('overviewWidgets').style.display = 'none';
+  const area = document.getElementById('overviewDetailArea');
+  area.style.display = 'block';
+  area.innerHTML = `<button class="btn" id="overviewBackBtn" style="margin-bottom:14px;">&larr; Back to Overview</button><div id="overviewDetailArea_inner"></div>`;
+  document.getElementById('overviewBackBtn').addEventListener('click', hideOverviewDetail);
+
+  const rerender = () => {
+    renderPaginatedView('overviewDetailArea_inner', list, overviewDetailPage, title, (p) => {
+      overviewDetailPage = p;
+      rerender();
+    });
+  };
+  rerender();
+}
+
+function hideOverviewDetail() {
+  document.querySelectorAll('.stat-card.active').forEach(el => el.classList.remove('active'));
+  overviewDetailActiveKey = null;
+  const area = document.getElementById('overviewDetailArea');
+  if (area) area.style.display = 'none';
+  const widgets = document.getElementById('overviewWidgets');
+  if (widgets) widgets.style.display = '';
+}
+
 document.getElementById('content').addEventListener('click', (e) => {
   const pill = e.target.closest('.time-pill');
   if (pill) {
@@ -512,8 +567,8 @@ document.getElementById('content').addEventListener('click', (e) => {
   if (!card) return;
 
   // The Follow-Ups card navigates to its own dedicated page (matching
-  // the mockup's "View list ->" link), rather than opening the small
-  // inline detail panel like the other stat cards do.
+  // the mockup's "View list ->" link), rather than swapping in a
+  // detail table on the same page like the other stat cards do.
   if (card.id === 'followupsStatCard') {
     switchView('followups');
     return;
@@ -526,29 +581,28 @@ document.getElementById('content').addEventListener('click', (e) => {
   document.querySelectorAll('.stat-card.active').forEach(el => el.classList.remove('active'));
 
   if (alreadyActive) {
-    hideDetailPanel();
+    hideOverviewDetail();
     return;
   }
   card.classList.add('active');
 
   // Use the same time-filtered set the KPI cards themselves are
-  // showing counts for, so the popup matches what's on the card.
+  // showing counts for, so the detail table matches what's on the card.
   const filteredShipments = getOverviewFilteredShipments();
-  const total = filteredShipments.length;
   const flagged = filteredShipments.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
   const delivered = filteredShipments.filter(s => s['Delivered Date']);
   const noDelay = filteredShipments.filter(s => !(s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE'));
   const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
 
-  const filters = {
+  const filterOptions = {
     total: { title: 'All Shipments', list: filteredShipments },
     noDelay: { title: 'No Delays', list: noDelay },
     exceptions: { title: 'Open Exceptions', list: flagged },
     atRisk: { title: 'At-Risk Deliveries', list: atRisk },
     delivered: { title: 'Delivered', list: delivered },
   };
-  const chosen = filters[filterKey];
-  if (chosen) showDetailPanel(chosen.title, chosen.list);
+  const chosen = filterOptions[filterKey];
+  if (chosen) showOverviewDetail(filterKey, chosen.title, chosen.list);
 });
 
 // ---- Search by tracking number or Q-order ----
@@ -871,6 +925,14 @@ function switchView(view) {
   if (view === 'followups') { followupsPage = 0; renderFollowupsView(); }
   if (view === 'reports') { renderReportsView(); }
 }
+
+document.getElementById('sidebarToggle').addEventListener('click', () => {
+  const shell = document.getElementById('shell');
+  const collapsed = shell.classList.toggle('sidebar-collapsed');
+  const btn = document.getElementById('sidebarToggle');
+  btn.innerHTML = collapsed ? '&#8250;' : '&#8249;';
+  btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+});
 
 document.querySelector('nav').addEventListener('click', (e) => {
   const item = e.target.closest('.nav-item');
@@ -1204,36 +1266,40 @@ function renderOverviewContent() {
       <div class="stat-card" id="followupsStatCard" title="Click to view Follow-Ups"><div class="stat-label">Follow-Ups Needed Today</div><div class="stat-value">${followupsInFrame.length}</div></div>
     </div>
 
-    <div class="panel" id="summaryPanel">
-      <h2>Summary</h2>
-      <div id="summaryText" style="font-size:13.5px;line-height:1.6;color:var(--ink);"></div>
-    </div>
+    <div id="overviewDetailArea" style="display:none;"></div>
 
-    <div class="row2">
+    <div id="overviewWidgets">
+      <div class="panel" id="summaryPanel">
+        <h2>Summary</h2>
+        <div id="summaryText" style="font-size:13.5px;line-height:1.6;color:var(--ink);"></div>
+      </div>
+
+      <div class="row2">
+        <div class="panel">
+          <h2>Carrier Comparison</h2>
+          <table>
+            <thead><tr><th>Carrier</th><th>Shipments</th><th>Exceptions</th><th>Exception Rate</th></tr></thead>
+            <tbody id="carrierTableBody"></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h2>Aging of Delays</h2>
+          <div class="donut-wrap" id="agingChartWrap"><canvas id="agingChart"></canvas></div>
+        </div>
+      </div>
+
       <div class="panel">
-        <h2>Carrier Comparison</h2>
+        <h2>Trend (Total Shipments &amp; Exceptions)</h2>
+        <div class="chart-wrap" id="trendChartWrap"><canvas id="trendChart"></canvas></div>
+      </div>
+
+      <div class="panel">
+        <h2>Exception Shipments (${flagged.length})</h2>
         <table>
-          <thead><tr><th>Carrier</th><th>Shipments</th><th>Exceptions</th><th>Exception Rate</th></tr></thead>
-          <tbody id="carrierTableBody"></tbody>
+          <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th></tr></thead>
+          <tbody id="exceptionsTableBody"></tbody>
         </table>
       </div>
-      <div class="panel">
-        <h2>Aging of Delays</h2>
-        <div class="donut-wrap" id="agingChartWrap"><canvas id="agingChart"></canvas></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Trend (Total Shipments &amp; Exceptions)</h2>
-      <div class="chart-wrap" id="trendChartWrap"><canvas id="trendChart"></canvas></div>
-    </div>
-
-    <div class="panel">
-      <h2>Exception Shipments (${flagged.length})</h2>
-      <table>
-        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th></tr></thead>
-        <tbody id="exceptionsTableBody"></tbody>
-      </table>
     </div>
   `;
 
@@ -1283,7 +1349,7 @@ function renderOverviewContent() {
     type: 'doughnut',
     data: {
       labels: ['On Time', '1-2 Days', '3-5 Days', '6+ Days'],
-      datasets: [{ data: [onTime, d1to2, d3to5, d6plus], backgroundColor: ['#2b7a3c', '#c8862b', '#e2895a', '#b3432f'], borderColor: '#fff', borderWidth: 2 }],
+      datasets: [{ data: [onTime, d1to2, d3to5, d6plus], backgroundColor: ['#2b7a3c', '#c8862b', '#e2895a', '#b3432f'], borderColor: getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#fff', borderWidth: 2 }],
     },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10.5 } } } } },
   });
@@ -1324,6 +1390,32 @@ function renderOverviewContent() {
     });
   }
 }
+
+// ---- Light/Dark mode ----
+function applyChartTheme() {
+  // Chart.js defaults to black legend/axis text, which is unreadable
+  // on a dark background - keep it in sync with the current theme.
+  Chart.defaults.color = document.body.classList.contains('dark') ? '#c9d3d0' : '#1c2624';
+}
+
+function setTheme(isDark) {
+  document.body.classList.toggle('dark', isDark);
+  document.getElementById('themeToggleKnob').innerHTML = isDark ? '&#9789;' : '&#9728;';
+  localStorage.setItem('dashboardTheme', isDark ? 'dark' : 'light');
+  applyChartTheme();
+  // Only Overview has Chart.js charts (donut + trend) - re-render them
+  // so colors/border pick up the new theme immediately, rather than
+  // waiting for the next unrelated re-render to happen to fix it.
+  if (currentActiveView === 'overview' && allShipmentsCache.length > 0) {
+    renderOverviewContent();
+  }
+}
+
+document.getElementById('themeToggle').addEventListener('click', () => {
+  setTheme(!document.body.classList.contains('dark'));
+});
+
+setTheme(localStorage.getItem('dashboardTheme') === 'dark');
 
 loadDashboard();
 loadLastUpdated();
