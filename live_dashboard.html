@@ -37,7 +37,7 @@
   .config-box { display: none; margin-bottom: 16px; background: white; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
   .config-box.open { display: block; }
   .config-box input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; margin-top: 4px; }
-  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 20px; }
   .stat-card { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; cursor: pointer; transition: background-color 0.15s, border-color 0.15s; }
   .stat-card:hover { background: var(--teal-100); border-color: var(--teal-500); }
   .stat-card.active { background: var(--teal-100); border-color: var(--teal-500); box-shadow: inset 0 0 0 1px var(--teal-500); }
@@ -85,6 +85,8 @@
       <div class="nav-item active" data-view="overview">Overview</div>
       <div class="nav-item" data-view="shipments">Shipments</div>
       <div class="nav-item" data-view="exceptions">Exceptions</div>
+      <div class="nav-item" data-view="followups">Follow-Ups</div>
+      <div class="nav-item" data-view="reports">Reports</div>
     </nav>
   </aside>
 
@@ -150,7 +152,7 @@
     <div class="panel" id="detailPanel" style="display:none;">
       <h2 id="detailPanelTitle"></h2>
       <table>
-        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Exception Type</th></tr></thead>
+        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th></tr></thead>
         <tbody id="detailTableBody"></tbody>
       </table>
     </div>
@@ -160,6 +162,8 @@
     </div>
     <div id="shipmentsView" style="display:none;"></div>
     <div id="exceptionsView" style="display:none;"></div>
+    <div id="followupsView" style="display:none;"></div>
+    <div id="reportsView" style="display:none;"></div>
   </main>
 </div>
 
@@ -473,7 +477,8 @@ let allShipmentsCache = [];
 
 function detailRow(s) {
   return `<td>${s['Tracking Number'] || ''}</td><td>${s['Carrier'] || ''}</td><td>${s['Q-order'] || ''}</td>
-    <td>${s['Destination'] || ''}</td><td>${s['Status'] || ''}</td><td>${s['Days Delayed'] || 0}</td><td>${s['Exception Type'] || ''}</td>`;
+    <td>${s['Destination'] || ''}</td><td>${s['Status'] || ''}</td><td>${s['Days Delayed'] || 0}</td>
+    <td>${s['Issue Type'] || ''}</td><td>${s['Next Action'] || ''}</td><td>${s['Owner'] || ''}</td>`;
 }
 
 function showDetailPanel(title, list) {
@@ -501,6 +506,15 @@ function hideDetailPanel() {
 document.getElementById('content').addEventListener('click', (e) => {
   const card = e.target.closest('.stat-card');
   if (!card) return;
+
+  // The Follow-Ups card navigates to its own dedicated page (matching
+  // the mockup's "View list ->" link), rather than opening the small
+  // inline detail panel like the other stat cards do.
+  if (card.id === 'followupsStatCard') {
+    switchView('followups');
+    return;
+  }
+
   const filterKey = card.dataset.filter;
   if (!filterKey) return;
 
@@ -560,16 +574,22 @@ searchInput.addEventListener('input', () => {
 const PAGE_SIZE = 50;
 let shipmentsPage = 0;
 let exceptionsPage = 0;
+let followupsPage = 0;
+let snapshotsCache = [];
 
 function switchView(view) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
   document.getElementById('content').style.display = view === 'overview' ? '' : 'none';
   document.getElementById('shipmentsView').style.display = view === 'shipments' ? '' : 'none';
   document.getElementById('exceptionsView').style.display = view === 'exceptions' ? '' : 'none';
+  document.getElementById('followupsView').style.display = view === 'followups' ? '' : 'none';
+  document.getElementById('reportsView').style.display = view === 'reports' ? '' : 'none';
   hideDetailPanel();
 
   if (view === 'shipments') { shipmentsPage = 0; renderShipmentsView(); }
   if (view === 'exceptions') { exceptionsPage = 0; renderExceptionsView(); }
+  if (view === 'followups') { followupsPage = 0; renderFollowupsView(); }
+  if (view === 'reports') { renderReportsView(); }
 }
 
 document.querySelector('nav').addEventListener('click', (e) => {
@@ -588,6 +608,82 @@ function renderExceptionsView() {
     (p) => { exceptionsPage = p; renderExceptionsView(); });
 }
 
+/**
+ * Follow-Ups Needed = flagged shipments where Next Action is still
+ * blank - i.e. nobody has decided what to do about it yet. This
+ * wasn't explicitly specified anywhere, so it's a reasonable default
+ * definition rather than a confirmed spec - adjust the filter below
+ * if a different definition is wanted (e.g. Owner blank instead, or
+ * only shipments flagged today).
+ */
+function getFollowupsNeeded() {
+  return allShipmentsCache.filter(s =>
+    (s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE') && !s['Next Action']
+  );
+}
+
+function renderFollowupsView() {
+  renderPaginatedView('followupsView', getFollowupsNeeded(), followupsPage, 'Follow-Ups Needed',
+    (p) => { followupsPage = p; renderFollowupsView(); });
+}
+
+/**
+ * Reports view: the Daily Snapshots history as a browsable table,
+ * plus a client-side CSV export (no server round-trip needed - built
+ * from data already loaded).
+ */
+function renderReportsView() {
+  const container = document.getElementById('reportsView');
+  if (snapshotsCache.length === 0) {
+    container.innerHTML = '<div class="panel"><h2>Reports</h2><div class="empty-state">No snapshot history yet.</div></div>';
+    return;
+  }
+
+  const sorted = snapshotsCache.slice().sort((a, b) => (b['Date'] || '').localeCompare(a['Date'] || ''));
+
+  container.innerHTML = `
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h2 style="margin:0;">Daily Snapshot History (${sorted.length})</h2>
+        <button class="btn" id="downloadReportBtn">Download CSV</button>
+      </div>
+      <table>
+        <thead><tr><th>Date</th><th>Carrier</th><th>Total Shipments</th><th>Delivered</th><th>Exceptions</th><th>On-Time Rate</th></tr></thead>
+        <tbody id="reportsTableBody"></tbody>
+      </table>
+    </div>
+  `;
+
+  const body = document.getElementById('reportsTableBody');
+  sorted.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s['Date'] || ''}</td><td>${s['Carrier'] || ''}</td><td>${s['Total Shipments'] || 0}</td>
+      <td>${s['Delivered'] || 0}</td><td>${s['Exceptions'] || 0}</td><td>${s['On-Time Rate (%)'] || 0}%</td>`;
+    body.appendChild(tr);
+  });
+
+  document.getElementById('downloadReportBtn').addEventListener('click', () => {
+    const headers = ['Date', 'Carrier', 'Total Shipments', 'Delivered', 'Exceptions', 'On-Time Rate (%)'];
+    const csvRows = [headers.join(',')].concat(
+      sorted.map(s => headers.map(h => `"${(s[h] ?? '').toString().replace(/"/g, '""')}"`).join(','))
+    );
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'shipment-snapshots-' + Utilities_formatDateISO(new Date()) + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}
+
+// Small local helper since Google's Utilities.formatDate isn't
+// available in browser JS - just need a simple YYYY-MM-DD stamp for
+// the downloaded filename.
+function Utilities_formatDateISO(d) {
+  return d.toISOString().slice(0, 10);
+}
+
 function renderPaginatedView(containerId, list, page, title, onPageChange) {
   const container = document.getElementById(containerId);
   if (list.length === 0) {
@@ -604,7 +700,7 @@ function renderPaginatedView(containerId, list, page, title, onPageChange) {
     <div class="panel">
       <h2>${title} (${list.length})</h2>
       <table>
-        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Exception Type</th></tr></thead>
+        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th></tr></thead>
         <tbody id="${containerId}TableBody"></tbody>
       </table>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:12.5px;color:var(--sub);">
@@ -647,6 +743,7 @@ function renderDashboard(shipments, snapshots) {
   const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
 
   allShipmentsCache = shipments;
+  snapshotsCache = snapshots;
 
   // ---- Dynamic subtitle: lists whichever carriers are actually in
   // the data, instead of a hardcoded "(FedEx)" that goes stale the
@@ -662,6 +759,7 @@ function renderDashboard(shipments, snapshots) {
       <div class="stat-card" data-filter="exceptions" title="Click to see open exceptions"><div class="stat-label">Open Exceptions</div><div class="stat-value">${flagged.length}</div></div>
       <div class="stat-card" data-filter="atRisk" title="Click to see at-risk deliveries"><div class="stat-label">At-Risk Deliveries</div><div class="stat-value">${atRisk.length}</div></div>
       <div class="stat-card" data-filter="delivered" title="Click to see delivered shipments"><div class="stat-label">Delivered</div><div class="stat-value">${delivered.length}</div></div>
+      <div class="stat-card" id="followupsStatCard" title="Click to view Follow-Ups"><div class="stat-label">Follow-Ups Needed Today</div><div class="stat-value">${getFollowupsNeeded().length}</div></div>
     </div>
 
     <div class="panel" id="summaryPanel">
@@ -691,7 +789,7 @@ function renderDashboard(shipments, snapshots) {
     <div class="panel">
       <h2>Exception Shipments (${flagged.length})</h2>
       <table>
-        <thead><tr><th>Tracking Number</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Exception Type</th></tr></thead>
+        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th></tr></thead>
         <tbody id="exceptionsTableBody"></tbody>
       </table>
     </div>
@@ -734,8 +832,7 @@ function renderDashboard(shipments, snapshots) {
   const excBody = document.getElementById('exceptionsTableBody');
   flagged.slice(0, 50).forEach(s => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${s['Tracking Number'] || ''}</td><td>${s['Q-order'] || ''}</td><td>${s['Destination'] || ''}</td>
-      <td>${s['Status'] || ''}</td><td>${s['Days Delayed'] || 0}</td><td>${s['Exception Type'] || ''}</td>`;
+    tr.innerHTML = detailRow(s);
     excBody.appendChild(tr);
   });
 
