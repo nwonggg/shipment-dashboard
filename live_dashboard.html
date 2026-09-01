@@ -74,7 +74,8 @@
     <div class="topbar">
       <div>
         <h1>Shipping Support Tracker</h1>
-        <div class="subtitle">Live data from your Shipment Dashboard Data sheet (FedEx)</div>
+        <!-- Carrier list is now filled in dynamically once data loads (see renderDashboard), instead of being hardcoded as "(FedEx)" -->
+        <div class="subtitle" id="subtitleText">Live data from your Shipment Dashboard Data sheet</div>
       </div>
       <div><button class="btn" id="refreshBtn">Refresh</button></div>
     </div>
@@ -272,6 +273,13 @@ function renderDashboard(shipments, snapshots) {
   const noDelay = total - flagged.length;
   const atRisk = flagged.filter(s => (s['Days Delayed'] || 0) <= 2 && (s['Days Delayed'] || 0) > 0);
 
+  // ---- Dynamic subtitle: lists whichever carriers are actually in
+  // the data, instead of a hardcoded "(FedEx)" that goes stale the
+  // moment a second carrier is added. ----
+  const carriersPresent = [...new Set(shipments.map(s => s['Carrier'] || 'Unknown'))].sort();
+  document.getElementById('subtitleText').textContent =
+    'Live data from your Shipment Dashboard Data sheet (' + carriersPresent.join(' + ') + ')';
+
   content.innerHTML = `
     <div class="stats">
       <div class="stat-card"><div class="stat-label">Shipments Analyzed</div><div class="stat-value">${total}</div></div>
@@ -291,13 +299,13 @@ function renderDashboard(shipments, snapshots) {
       </div>
       <div class="panel">
         <h2>Aging of Delays</h2>
-        <div class="donut-wrap"><canvas id="agingChart"></canvas></div>
+        <div class="donut-wrap" id="agingChartWrap"><canvas id="agingChart"></canvas></div>
       </div>
     </div>
 
     <div class="panel">
       <h2>Trend (Total Shipments &amp; Exceptions)</h2>
-      <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+      <div class="chart-wrap" id="trendChartWrap"><canvas id="trendChart"></canvas></div>
     </div>
 
     <div class="panel">
@@ -336,10 +344,27 @@ function renderDashboard(shipments, snapshots) {
   });
 
   // ---- Aging donut ----
+  // FIX: buckets used to be computed from ALL shipments filtered by
+  // Days Delayed, while "On Time" was computed from the separate
+  // `flagged` set. That mismatch meant exception-flagged shipments
+  // with Days Delayed === 0 (e.g. a fresh carrier-reported exception
+  // with no accrued date-based delay yet) were excluded from BOTH
+  // "On Time" and every delay bucket - they just vanished from the
+  // chart, making it look like almost nothing was delayed even when
+  // the Exception Shipments table below showed real open exceptions.
+  //
+  // Now every bucket is derived from the SAME `flagged` set used for
+  // "On Time", so onTime + 1-2 + 3-5 + 6+ always sums to exactly
+  // `total`, and every flagged shipment - date-based or exception-
+  // based - shows up somewhere on the chart. Flagged shipments with
+  // 0 accrued days delayed are grouped into the 1-2 Days bucket
+  // rather than dropped, since they're still an open exception, not
+  // an on-time shipment.
   const onTime = total - flagged.length;
-  const d1to2 = shipments.filter(s => (s['Days Delayed'] || 0) >= 1 && (s['Days Delayed'] || 0) <= 2).length;
-  const d3to5 = shipments.filter(s => (s['Days Delayed'] || 0) >= 3 && (s['Days Delayed'] || 0) <= 5).length;
-  const d6plus = shipments.filter(s => (s['Days Delayed'] || 0) >= 6).length;
+  const flaggedDays = flagged.map(s => Number(s['Days Delayed']) || 0);
+  const d1to2 = flaggedDays.filter(d => d <= 2).length;
+  const d3to5 = flaggedDays.filter(d => d >= 3 && d <= 5).length;
+  const d6plus = flaggedDays.filter(d => d >= 6).length;
 
   new Chart(document.getElementById('agingChart'), {
     type: 'doughnut',
@@ -351,26 +376,40 @@ function renderDashboard(shipments, snapshots) {
   });
 
   // ---- Trend chart from Daily Snapshots ----
+  // FIX: rows with a missing/blank Date no longer get lumped into a
+  // misleading 'Unknown' bucket - they're skipped instead, and if
+  // there's no usable snapshot history yet at all, we show a plain
+  // empty-state message rather than a flat, confusing chart.
   const byDate = {};
   snapshots.forEach(s => {
-    const key = s['Date'] || 'Unknown';
+    const key = (s['Date'] || '').toString().trim();
+    if (!key) return;
     if (!byDate[key]) byDate[key] = { total: 0, exceptions: 0 };
     byDate[key].total += Number(s['Total Shipments']) || 0;
     byDate[key].exceptions += Number(s['Exceptions']) || 0;
   });
   const dates = Object.keys(byDate).sort();
+  const trendWrap = document.getElementById('trendChartWrap');
 
-  new Chart(document.getElementById('trendChart'), {
-    type: 'line',
-    data: {
-      labels: dates,
-      datasets: [
-        { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3 },
-        { label: 'Exceptions', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3 },
-      ],
-    },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { y: { beginAtZero: true } } },
-  });
+  if (dates.length === 0) {
+    trendWrap.outerHTML = '<div class="empty-state" id="trendChartWrap">No snapshot history yet - this builds up automatically as syncDashboardData runs on future days.</div>';
+  } else {
+    if (dates.length === 1) {
+      trendWrap.insertAdjacentHTML('beforebegin',
+        '<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">Only 1 day of history so far - this chart becomes more useful as daily snapshots accumulate.</div>');
+    }
+    new Chart(document.getElementById('trendChart'), {
+      type: 'line',
+      data: {
+        labels: dates,
+        datasets: [
+          { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3 },
+          { label: 'Exceptions', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3 },
+        ],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { y: { beginAtZero: true } } },
+    });
+  }
 }
 
 loadDashboard();
