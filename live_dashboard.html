@@ -26,6 +26,13 @@
   .btn { border: 1px solid var(--line); background: white; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
   .btn:hover { border-color: var(--teal-500); background: var(--teal-100); }
   .config-toggle { font-size: 12px; color: var(--teal-700); cursor: pointer; text-decoration: underline; margin-bottom: 10px; display: inline-block; }
+  .upload-panel { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; }
+  .upload-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .last-updated { font-size: 12.5px; color: var(--sub); }
+  .last-updated b { color: var(--ink); }
+  .upload-status { font-size: 12.5px; }
+  .upload-status.ok { color: var(--green); }
+  .upload-status.err { color: var(--red); }
   .config-box { display: none; margin-bottom: 16px; background: white; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
   .config-box.open { display: block; }
   .config-box input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; margin-top: 4px; }
@@ -72,6 +79,24 @@
       <div><button class="btn" id="refreshBtn">Refresh</button></div>
     </div>
 
+    <div class="upload-panel">
+      <div class="upload-row">
+        <div>
+          <label class="btn" style="cursor:pointer;">
+            Upload New CSV
+            <input type="file" id="csvFileInput" accept=".csv" style="display:none;">
+          </label>
+        </div>
+        <div class="upload-status" id="uploadStatus"></div>
+        <div class="last-updated" id="lastUpdated" style="margin-left:auto;">Checking last update...</div>
+      </div>
+    </div>
+
+    <form id="uploadForm" method="POST" target="uploadFrame" style="display:none;">
+      <input type="hidden" name="csvData" id="csvDataField">
+    </form>
+    <iframe name="uploadFrame" id="uploadFrame" style="display:none;"></iframe>
+
     <span class="config-toggle" id="configToggle">Web App settings</span>
     <div class="config-box" id="configBox">
       <label style="font-size:12.5px;font-weight:600;">Apps Script Web App URL</label>
@@ -101,6 +126,86 @@ workerUrlInput.addEventListener('change', () => {
 });
 if (!workerUrlInput.value) configBox.classList.add('open');
 document.getElementById('refreshBtn').addEventListener('click', loadDashboard);
+
+// ---- Upload New CSV ----
+const csvFileInput = document.getElementById('csvFileInput');
+const uploadForm = document.getElementById('uploadForm');
+const csvDataField = document.getElementById('csvDataField');
+const uploadFrame = document.getElementById('uploadFrame');
+const uploadStatus = document.getElementById('uploadStatus');
+let uploadFrameReady = false; // ignore the iframe's initial blank-page load event
+
+uploadFrame.addEventListener('load', () => {
+  if (!uploadFrameReady) { uploadFrameReady = true; return; }
+  uploadStatus.textContent = 'Processing complete - refreshing...';
+  uploadStatus.className = 'upload-status ok';
+  setTimeout(() => {
+    loadDashboard();
+    loadLastUpdated();
+  }, 800);
+});
+
+csvFileInput.addEventListener('change', () => {
+  const workerUrl = workerUrlInput.value.trim();
+  if (!workerUrl) {
+    uploadStatus.textContent = 'Set your Web App URL first (see Web App settings below).';
+    uploadStatus.className = 'upload-status err';
+    configBox.classList.add('open');
+    return;
+  }
+  const file = csvFileInput.files[0];
+  if (!file) return;
+
+  uploadStatus.textContent = 'Reading file...';
+  uploadStatus.className = 'upload-status';
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    csvDataField.value = reader.result;
+    uploadForm.action = workerUrl;
+    uploadStatus.textContent = 'Uploading and processing (may take a moment for large files)...';
+    uploadForm.submit();
+  };
+  reader.onerror = () => {
+    uploadStatus.textContent = 'Could not read that file.';
+    uploadStatus.className = 'upload-status err';
+  };
+  reader.readAsText(file);
+});
+
+async function loadLastUpdated() {
+  const workerUrl = workerUrlInput.value.trim();
+  const lastUpdatedEl = document.getElementById('lastUpdated');
+  if (!workerUrl) { lastUpdatedEl.textContent = ''; return; }
+
+  try {
+    const [syncLog, uploadLog] = await Promise.allSettled([
+      fetchSheetTab(workerUrl, 'Sync Log'),
+      fetchSheetTab(workerUrl, 'Upload Log'),
+    ]);
+
+    const candidates = [];
+    if (syncLog.status === 'fulfilled' && syncLog.value.length > 0) {
+      const last = syncLog.value[syncLog.value.length - 1];
+      candidates.push({ time: last['Run Time'], source: 'Drive/Trigger Sync' });
+    }
+    if (uploadLog.status === 'fulfilled' && uploadLog.value.length > 0) {
+      const last = uploadLog.value[uploadLog.value.length - 1];
+      candidates.push({ time: last['Timestamp'], source: last['Source'] || 'Browser Upload' });
+    }
+
+    if (candidates.length === 0) {
+      lastUpdatedEl.textContent = 'No sync history yet.';
+      return;
+    }
+
+    candidates.sort((a, b) => new Date(b.time) - new Date(a.time));
+    const mostRecent = candidates[0];
+    lastUpdatedEl.innerHTML = 'Data last updated: <b>' + mostRecent.time + '</b> (' + mostRecent.source + ')';
+  } catch (err) {
+    lastUpdatedEl.textContent = '';
+  }
+}
 
 async function fetchSheetTab(workerUrl, tabName) {
   return new Promise((resolve, reject) => {
@@ -204,6 +309,7 @@ function renderDashboard(shipments, snapshots) {
     </div>
   `;
 
+  // ---- Carrier comparison ----
   const byCarrier = {};
   shipments.forEach(s => {
     const c = s['Carrier'] || 'Unknown';
@@ -220,6 +326,7 @@ function renderDashboard(shipments, snapshots) {
     carrierBody.appendChild(tr);
   });
 
+  // ---- Exceptions table ----
   const excBody = document.getElementById('exceptionsTableBody');
   flagged.slice(0, 50).forEach(s => {
     const tr = document.createElement('tr');
@@ -228,6 +335,7 @@ function renderDashboard(shipments, snapshots) {
     excBody.appendChild(tr);
   });
 
+  // ---- Aging donut ----
   const onTime = total - flagged.length;
   const d1to2 = shipments.filter(s => (s['Days Delayed'] || 0) >= 1 && (s['Days Delayed'] || 0) <= 2).length;
   const d3to5 = shipments.filter(s => (s['Days Delayed'] || 0) >= 3 && (s['Days Delayed'] || 0) <= 5).length;
@@ -242,6 +350,7 @@ function renderDashboard(shipments, snapshots) {
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10.5 } } } } },
   });
 
+  // ---- Trend chart from Daily Snapshots ----
   const byDate = {};
   snapshots.forEach(s => {
     const key = s['Date'] || 'Unknown';
@@ -265,6 +374,7 @@ function renderDashboard(shipments, snapshots) {
 }
 
 loadDashboard();
+loadLastUpdated();
 </script>
 
 </body>
