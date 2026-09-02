@@ -24,6 +24,13 @@
   #sidebarToggle { position: absolute; top: 22px; left: 220px; transform: translateX(-50%); width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center; z-index: 20; transition: left 0.2s ease; color: var(--sub); }
   #sidebarToggle:hover { border-color: var(--teal-500); color: var(--teal-700); }
   .shell.sidebar-collapsed #sidebarToggle { left: 0px; }
+  .sidebar-widgets { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .sidebar-widget-loading { font-size: 11.5px; color: var(--sub); }
+  .sidebar-widget-title { font-size: 10.5px; font-weight: 700; color: var(--sub); letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 8px; }
+  .sidebar-widget-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; padding: 4px 0; }
+  .sidebar-widget-row.severe { color: var(--red); font-weight: 600; }
+  .sidebar-holiday-row { font-size: 11.5px; padding: 4px 0; color: var(--ink); }
+  .sidebar-holiday-row .days { color: var(--sub); font-size: 10.5px; }
   .theme-toggle { width: 46px; height: 26px; border-radius: 20px; border: none; background: var(--teal-700); position: relative; cursor: pointer; padding: 0; flex-shrink: 0; transition: background 0.2s ease; }
   .theme-toggle-knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: white; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--teal-700); transition: left 0.2s ease; }
   body.dark .theme-toggle-knob { left: 23px; }
@@ -100,6 +107,10 @@
       <div class="nav-item" data-view="followups">Follow-Ups</div>
       <div class="nav-item" data-view="reports">Reports</div>
     </nav>
+
+    <div id="sidebarWidgets" class="sidebar-widgets">
+      <div class="sidebar-widget-loading">Loading weather...</div>
+    </div>
   </aside>
   <button id="sidebarToggle" title="Collapse sidebar">&#8249;</button>
 
@@ -613,59 +624,57 @@ async function loadWeatherAndHolidays() {
     weatherHolidaysLoaded = true;
   } finally {
     weatherHolidaysLoading = false;
-    if (currentActiveView === 'overview') renderOverviewContent();
+    renderSidebarWidgets();
   }
 }
 
-function buildWeatherPanelHtml() {
-  if (!weatherHolidaysLoaded && weatherHolidaysLoading) {
-    return '<div class="panel"><h2>Weather at Destinations</h2><div class="loading" style="padding:14px 0;">Loading...</div></div>';
+/**
+ * Renders compact weather + holiday widgets into the sidebar (not
+ * the main content area) - this means they're visible on every page
+ * (Shipments, Exceptions, Reports, etc.), not just Overview, since
+ * the sidebar is always present. Shown for every operator on every
+ * device automatically once the page loads - this isn't a per-user
+ * preference, it's baked into the page itself.
+ */
+function renderSidebarWidgets() {
+  const container = document.getElementById('sidebarWidgets');
+  if (!container) return;
+
+  if (weatherHolidaysLoading && !weatherHolidaysLoaded) {
+    container.innerHTML = '<div class="sidebar-widget-loading">Loading weather...</div>';
+    return;
   }
+
   const states = Object.values(weatherCache);
-  if (states.length === 0) {
-    return '<div class="panel"><h2>Weather at Destinations</h2><div class="empty-state" style="padding:14px 0;">No weather data available.</div></div>';
-  }
-  return `
-    <div class="panel">
-      <h2>Weather at Destinations</h2>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;">
-        ${states.map(w => `
-          <div style="border:1px solid ${w.severe ? 'var(--red)' : 'var(--line)'};background:${w.severe ? '#fbe6de22' : 'transparent'};border-radius:10px;padding:10px 14px;min-width:110px;">
-            <div style="font-size:11px;color:var(--sub);">${US_STATE_COORDS[w.state].name}</div>
-            <div style="font-size:20px;margin:2px 0;">${w.emoji} ${w.temp}&deg;F</div>
-            <div style="font-size:11.5px;color:${w.severe ? 'var(--red)' : 'var(--sub)'};font-weight:${w.severe ? '600' : '400'};">${w.label}</div>
-            <div style="font-size:10.5px;color:var(--sub);margin-top:2px;">${w.shipmentCount} active shipment${w.shipmentCount === 1 ? '' : 's'}</div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `;
-}
+  const weatherHtml = states.length === 0
+    ? '<div class="sidebar-widget-loading">No weather data.</div>'
+    : states.slice(0, 5).map(w => `
+        <div class="sidebar-widget-row ${w.severe ? 'severe' : ''}" title="${w.label} - ${w.shipmentCount} active shipment${w.shipmentCount === 1 ? '' : 's'}">
+          <span>${w.emoji} ${w.state}</span>
+          <span>${w.temp}&deg;F</span>
+        </div>
+      `).join('');
 
-function buildHolidaysPanelHtml() {
-  if (!weatherHolidaysLoaded && weatherHolidaysLoading) {
-    return '<div class="panel"><h2>Upcoming Holidays (US)</h2><div class="loading" style="padding:14px 0;">Loading...</div></div>';
-  }
-  if (holidaysCache.length === 0) {
-    return '<div class="panel"><h2>Upcoming Holidays (US)</h2><div class="empty-state" style="padding:14px 0;">No upcoming holidays found.</div></div>';
-  }
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const upcoming = holidaysCache.slice(0, 5).map(h => {
+  const upcoming = holidaysCache.slice(0, 3).map(h => {
     const d = new Date(h.date + 'T00:00:00');
     const daysUntil = Math.round((d - today) / (1000 * 60 * 60 * 24));
     return { ...h, daysUntil };
   });
-  return `
-    <div class="panel">
-      <h2>Upcoming Holidays (US)</h2>
-      <div style="font-size:11.5px;color:var(--sub);margin-bottom:10px;">Carrier pickups/deliveries may be affected on these dates.</div>
-      <table>
-        <thead><tr><th>Date</th><th>Holiday</th><th>Days Away</th></tr></thead>
-        <tbody>
-          ${upcoming.map(h => `<tr><td>${h.date}</td><td>${h.localName || h.name}</td><td>${h.daysUntil === 0 ? 'Today' : h.daysUntil + ' day' + (h.daysUntil === 1 ? '' : 's')}</td></tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
+  const holidaysHtml = upcoming.length === 0
+    ? '<div class="sidebar-widget-loading">No upcoming holidays.</div>'
+    : upcoming.map(h => `
+        <div class="sidebar-holiday-row">
+          ${h.localName || h.name}
+          <span class="days">&mdash; ${h.daysUntil === 0 ? 'today' : h.daysUntil + 'd'}</span>
+        </div>
+      `).join('');
+
+  container.innerHTML = `
+    <div class="sidebar-widget-title">Weather</div>
+    ${weatherHtml}
+    <div class="sidebar-widget-title" style="margin-top:16px;">Holidays (US)</div>
+    ${holidaysHtml}
   `;
 }
 
@@ -1492,11 +1501,6 @@ function renderOverviewContent() {
     <div id="overviewDetailArea" style="display:none;"></div>
 
     <div id="overviewWidgets">
-      <div class="row2">
-        ${buildWeatherPanelHtml()}
-        ${buildHolidaysPanelHtml()}
-      </div>
-
       <div class="panel" id="summaryPanel">
         <h2>Summary</h2>
         <div id="summaryText" style="font-size:13.5px;line-height:1.6;color:var(--ink);"></div>
