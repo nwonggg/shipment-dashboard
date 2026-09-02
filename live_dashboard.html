@@ -490,6 +490,226 @@ function carrierLogoBadge(carrier) {
 // search can filter against it without re-fetching.
 let allShipmentsCache = [];
 
+/**
+ * ============================================================
+ * WEATHER + HOLIDAY CONTEXT
+ * ============================================================
+ * Both use free, no-API-key, CORS-friendly public APIs so this
+ * works from a static GitHub Pages page with no backend proxy:
+ *   - Open-Meteo (weather): https://open-meteo.com
+ *   - Nager.Date (public holidays): https://date.nager.at
+ *
+ * Weather is looked up per-STATE (not per-city), since that's the
+ * only destination granularity consistently available across both
+ * carriers today (UPS's CSV export doesn't include a recipient city
+ * column). Each state uses its capital city as a representative
+ * point - not exact for a huge state, but good enough to catch
+ * "there's a storm affecting this whole region."
+ * ============================================================
+ */
+const US_STATE_COORDS = {
+  AL: { name: 'Alabama', lat: 32.3617, lon: -86.2792 }, AK: { name: 'Alaska', lat: 58.3019, lon: -134.4197 },
+  AZ: { name: 'Arizona', lat: 33.4484, lon: -112.0740 }, AR: { name: 'Arkansas', lat: 34.7465, lon: -92.2896 },
+  CA: { name: 'California', lat: 38.5816, lon: -121.4944 }, CO: { name: 'Colorado', lat: 39.7392, lon: -104.9903 },
+  CT: { name: 'Connecticut', lat: 41.7658, lon: -72.6734 }, DE: { name: 'Delaware', lat: 39.1582, lon: -75.5244 },
+  FL: { name: 'Florida', lat: 30.4383, lon: -84.2807 }, GA: { name: 'Georgia', lat: 33.7490, lon: -84.3880 },
+  HI: { name: 'Hawaii', lat: 21.3069, lon: -157.8583 }, ID: { name: 'Idaho', lat: 43.6150, lon: -116.2023 },
+  IL: { name: 'Illinois', lat: 39.7817, lon: -89.6501 }, IN: { name: 'Indiana', lat: 39.7684, lon: -86.1581 },
+  IA: { name: 'Iowa', lat: 41.5868, lon: -93.6250 }, KS: { name: 'Kansas', lat: 39.0473, lon: -95.6752 },
+  KY: { name: 'Kentucky', lat: 38.2009, lon: -84.8733 }, LA: { name: 'Louisiana', lat: 30.4515, lon: -91.1871 },
+  ME: { name: 'Maine', lat: 44.3106, lon: -69.7795 }, MD: { name: 'Maryland', lat: 38.9784, lon: -76.4922 },
+  MA: { name: 'Massachusetts', lat: 42.3601, lon: -71.0589 }, MI: { name: 'Michigan', lat: 42.7325, lon: -84.5555 },
+  MN: { name: 'Minnesota', lat: 44.9537, lon: -93.0900 }, MS: { name: 'Mississippi', lat: 32.2988, lon: -90.1848 },
+  MO: { name: 'Missouri', lat: 38.5767, lon: -92.1735 }, MT: { name: 'Montana', lat: 46.5891, lon: -112.0391 },
+  NE: { name: 'Nebraska', lat: 40.8136, lon: -96.7026 }, NV: { name: 'Nevada', lat: 39.1638, lon: -119.7674 },
+  NH: { name: 'New Hampshire', lat: 43.2081, lon: -71.5376 }, NJ: { name: 'New Jersey', lat: 40.2206, lon: -74.7597 },
+  NM: { name: 'New Mexico', lat: 35.6870, lon: -105.9378 }, NY: { name: 'New York', lat: 42.6526, lon: -73.7562 },
+  NC: { name: 'North Carolina', lat: 35.7796, lon: -78.6382 }, ND: { name: 'North Dakota', lat: 46.8083, lon: -100.7837 },
+  OH: { name: 'Ohio', lat: 39.9612, lon: -82.9988 }, OK: { name: 'Oklahoma', lat: 35.4676, lon: -97.5164 },
+  OR: { name: 'Oregon', lat: 44.9429, lon: -123.0351 }, PA: { name: 'Pennsylvania', lat: 40.2732, lon: -76.8867 },
+  RI: { name: 'Rhode Island', lat: 41.8240, lon: -71.4128 }, SC: { name: 'South Carolina', lat: 34.0007, lon: -81.0348 },
+  SD: { name: 'South Dakota', lat: 44.3683, lon: -100.3510 }, TN: { name: 'Tennessee', lat: 36.1627, lon: -86.7816 },
+  TX: { name: 'Texas', lat: 30.2672, lon: -97.7431 }, UT: { name: 'Utah', lat: 40.7608, lon: -111.8910 },
+  VT: { name: 'Vermont', lat: 44.2601, lon: -72.5754 }, VA: { name: 'Virginia', lat: 37.5407, lon: -77.4360 },
+  WA: { name: 'Washington', lat: 47.0379, lon: -122.9007 }, WV: { name: 'West Virginia', lat: 38.3498, lon: -81.6326 },
+  WI: { name: 'Wisconsin', lat: 43.0731, lon: -89.4012 }, WY: { name: 'Wyoming', lat: 41.1400, lon: -104.8202 },
+  DC: { name: 'D.C.', lat: 38.9072, lon: -77.0369 },
+};
+
+// Open-Meteo WMO weather codes, simplified to what we actually need:
+// a label, an emoji, and whether it counts as "severe enough to flag."
+const WEATHER_CODE_MAP = {
+  0: { label: 'Clear', emoji: '☀️', severe: false }, 1: { label: 'Mostly clear', emoji: '🌤️', severe: false },
+  2: { label: 'Partly cloudy', emoji: '⛅', severe: false }, 3: { label: 'Overcast', emoji: '☁️', severe: false },
+  45: { label: 'Fog', emoji: '🌫️', severe: false }, 48: { label: 'Fog', emoji: '🌫️', severe: false },
+  51: { label: 'Light drizzle', emoji: '🌦️', severe: false }, 53: { label: 'Drizzle', emoji: '🌦️', severe: false },
+  55: { label: 'Heavy drizzle', emoji: '🌧️', severe: false }, 56: { label: 'Freezing drizzle', emoji: '🌧️', severe: true },
+  57: { label: 'Freezing drizzle', emoji: '🌧️', severe: true }, 61: { label: 'Light rain', emoji: '🌧️', severe: false },
+  63: { label: 'Rain', emoji: '🌧️', severe: false }, 65: { label: 'Heavy rain', emoji: '🌧️', severe: true },
+  66: { label: 'Freezing rain', emoji: '🌨️', severe: true }, 67: { label: 'Freezing rain', emoji: '🌨️', severe: true },
+  71: { label: 'Light snow', emoji: '❄️', severe: false }, 73: { label: 'Snow', emoji: '❄️', severe: true },
+  75: { label: 'Heavy snow', emoji: '❄️', severe: true }, 77: { label: 'Snow grains', emoji: '🌨️', severe: false },
+  80: { label: 'Rain showers', emoji: '🌦️', severe: false }, 81: { label: 'Rain showers', emoji: '🌧️', severe: false },
+  82: { label: 'Violent showers', emoji: '⛈️', severe: true }, 85: { label: 'Snow showers', emoji: '🌨️', severe: true },
+  86: { label: 'Heavy snow showers', emoji: '🌨️', severe: true }, 95: { label: 'Thunderstorm', emoji: '⛈️', severe: true },
+  96: { label: 'Thunderstorm w/ hail', emoji: '⛈️', severe: true }, 99: { label: 'Thunderstorm w/ hail', emoji: '⛈️', severe: true },
+};
+
+let weatherCache = {};
+let holidaysCache = [];
+let weatherHolidaysLoaded = false;
+let weatherHolidaysLoading = false;
+
+/**
+ * Fetches weather for the states where currently-active (not yet
+ * delivered) shipments are actually headed, and upcoming US public
+ * holidays. Runs once per page load - results are cached and just
+ * re-displayed (no re-fetch) on every subsequent Overview re-render,
+ * e.g. clicking a time-frame pill.
+ */
+async function loadWeatherAndHolidays() {
+  if (weatherHolidaysLoading || weatherHolidaysLoaded) return;
+  weatherHolidaysLoading = true;
+
+  try {
+    // Which states actually matter right now: active shipments only,
+    // ranked by how many are headed there, capped at the top 8 to
+    // keep this to a reasonable number of API calls.
+    const active = allShipmentsCache.filter(s => !s['Delivered Date']);
+    const countByState = {};
+    active.forEach(s => {
+      const state = (s['Destination'] || '').toString().trim().toUpperCase();
+      if (US_STATE_COORDS[state]) countByState[state] = (countByState[state] || 0) + 1;
+    });
+    const topStates = Object.keys(countByState).sort((a, b) => countByState[b] - countByState[a]).slice(0, 8);
+
+    const weatherResults = await Promise.allSettled(topStates.map(async state => {
+      const { lat, lon } = US_STATE_COORDS[state];
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit`;
+      const res = await fetch(url);
+      const data = await res.json();
+      const code = data.current.weather_code;
+      const info = WEATHER_CODE_MAP[code] || { label: 'Unknown', emoji: '❔', severe: false };
+      return { state, shipmentCount: countByState[state], temp: Math.round(data.current.temperature_2m), ...info };
+    }));
+
+    weatherCache = {};
+    weatherResults.forEach(r => {
+      if (r.status === 'fulfilled') weatherCache[r.value.state] = r.value;
+    });
+
+    try {
+      const holidayRes = await fetch('https://date.nager.at/api/v3/NextPublicHolidays/US');
+      holidaysCache = holidayRes.ok ? await holidayRes.json() : [];
+    } catch (e) {
+      holidaysCache = [];
+    }
+
+    weatherHolidaysLoaded = true;
+  } catch (e) {
+    // Fail quietly - weather/holidays are a nice-to-have, not core
+    // dashboard functionality. Don't let a network hiccup here break
+    // anything else.
+    weatherHolidaysLoaded = true;
+  } finally {
+    weatherHolidaysLoading = false;
+    if (currentActiveView === 'overview') renderOverviewContent();
+  }
+}
+
+function buildWeatherPanelHtml() {
+  if (!weatherHolidaysLoaded && weatherHolidaysLoading) {
+    return '<div class="panel"><h2>Weather at Destinations</h2><div class="loading" style="padding:14px 0;">Loading...</div></div>';
+  }
+  const states = Object.values(weatherCache);
+  if (states.length === 0) {
+    return '<div class="panel"><h2>Weather at Destinations</h2><div class="empty-state" style="padding:14px 0;">No weather data available.</div></div>';
+  }
+  return `
+    <div class="panel">
+      <h2>Weather at Destinations</h2>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        ${states.map(w => `
+          <div style="border:1px solid ${w.severe ? 'var(--red)' : 'var(--line)'};background:${w.severe ? '#fbe6de22' : 'transparent'};border-radius:10px;padding:10px 14px;min-width:110px;">
+            <div style="font-size:11px;color:var(--sub);">${US_STATE_COORDS[w.state].name}</div>
+            <div style="font-size:20px;margin:2px 0;">${w.emoji} ${w.temp}&deg;F</div>
+            <div style="font-size:11.5px;color:${w.severe ? 'var(--red)' : 'var(--sub)'};font-weight:${w.severe ? '600' : '400'};">${w.label}</div>
+            <div style="font-size:10.5px;color:var(--sub);margin-top:2px;">${w.shipmentCount} active shipment${w.shipmentCount === 1 ? '' : 's'}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function buildHolidaysPanelHtml() {
+  if (!weatherHolidaysLoaded && weatherHolidaysLoading) {
+    return '<div class="panel"><h2>Upcoming Holidays (US)</h2><div class="loading" style="padding:14px 0;">Loading...</div></div>';
+  }
+  if (holidaysCache.length === 0) {
+    return '<div class="panel"><h2>Upcoming Holidays (US)</h2><div class="empty-state" style="padding:14px 0;">No upcoming holidays found.</div></div>';
+  }
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const upcoming = holidaysCache.slice(0, 5).map(h => {
+    const d = new Date(h.date + 'T00:00:00');
+    const daysUntil = Math.round((d - today) / (1000 * 60 * 60 * 24));
+    return { ...h, daysUntil };
+  });
+  return `
+    <div class="panel">
+      <h2>Upcoming Holidays (US)</h2>
+      <div style="font-size:11.5px;color:var(--sub);margin-bottom:10px;">Carrier pickups/deliveries may be affected on these dates.</div>
+      <table>
+        <thead><tr><th>Date</th><th>Holiday</th><th>Days Away</th></tr></thead>
+        <tbody>
+          ${upcoming.map(h => `<tr><td>${h.date}</td><td>${h.localName || h.name}</td><td>${h.daysUntil === 0 ? 'Today' : h.daysUntil + ' day' + (h.daysUntil === 1 ? '' : 's')}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/**
+ * A single "heads up" banner only shown when there's actually
+ * something worth flagging - severe weather affecting active
+ * shipments, or a holiday coming up soon enough to matter. Silence
+ * (no banner) is intentional when nothing's notable, rather than
+ * showing an empty/reassuring banner every day.
+ */
+function buildRiskBannerHtml() {
+  if (!weatherHolidaysLoaded) return '';
+
+  const severeStates = Object.values(weatherCache).filter(w => w.severe);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const soonHoliday = holidaysCache.find(h => {
+    const d = new Date(h.date + 'T00:00:00');
+    const daysUntil = Math.round((d - today) / (1000 * 60 * 60 * 24));
+    return daysUntil >= 0 && daysUntil <= 5;
+  });
+
+  if (severeStates.length === 0 && !soonHoliday) return '';
+
+  const parts = [];
+  if (severeStates.length > 0) {
+    const totalAffected = severeStates.reduce((sum, w) => sum + w.shipmentCount, 0);
+    const stateList = severeStates.map(w => w.state).join(', ');
+    parts.push(`${severeStates[0].emoji} Severe weather (${severeStates.map(w => w.label.toLowerCase()).join(', ')}) in ${stateList}, affecting ${totalAffected} active shipment${totalAffected === 1 ? '' : 's'}.`);
+  }
+  if (soonHoliday) {
+    const d = new Date(soonHoliday.date + 'T00:00:00');
+    const daysUntil = Math.round((d - today) / (1000 * 60 * 60 * 24));
+    parts.push(`📅 ${soonHoliday.localName || soonHoliday.name} is ${daysUntil === 0 ? 'today' : 'in ' + daysUntil + ' day' + (daysUntil === 1 ? '' : 's')} - expect possible carrier delays.`);
+  }
+
+  return `
+    <div class="panel" style="border-color:var(--amber);background:#fbf1de33;margin-bottom:16px;padding:12px 18px;">
+      <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:4px;">Heads Up</div>
+      ${parts.map(p => `<div style="font-size:13px;color:var(--ink);margin-bottom:2px;">${p}</div>`).join('')}
+    </div>
+  `;
+}
+
+
 function detailRow(s) {
   return `<td>${s['Tracking Number'] || ''}</td><td>${s['Carrier'] || ''}</td><td>${s['Q-order'] || ''}</td>
     <td>${s['Destination'] || ''}</td><td>${s['Status'] || ''}</td><td>${s['Days Delayed'] || 0}</td>
@@ -1209,6 +1429,7 @@ function renderDashboard(shipments, snapshots) {
     'Live data from your Shipment Dashboard Data sheet (' + carriersPresent.join(' + ') + ')';
 
   renderOverviewContent();
+  loadWeatherAndHolidays();
 }
 
 const TIME_FRAME_PILLS = [
@@ -1248,6 +1469,8 @@ function renderOverviewContent() {
   );
 
   content.innerHTML = `
+    ${buildRiskBannerHtml()}
+
     <div class="panel" style="margin-bottom:16px;padding:12px 18px;">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <span style="font-size:11px;color:var(--sub);margin-right:4px;">TIME FRAME:</span>
@@ -1269,6 +1492,11 @@ function renderOverviewContent() {
     <div id="overviewDetailArea" style="display:none;"></div>
 
     <div id="overviewWidgets">
+      <div class="row2">
+        ${buildWeatherPanelHtml()}
+        ${buildHolidaysPanelHtml()}
+      </div>
+
       <div class="panel" id="summaryPanel">
         <h2>Summary</h2>
         <div id="summaryText" style="font-size:13.5px;line-height:1.6;color:var(--ink);"></div>
