@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Shipping Support Tracker</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
   :root {
     --teal-900: #0b3d3a; --teal-700: #0f6b62; --teal-500: #16a394; --teal-100: #e3f5f2;
@@ -19,18 +20,11 @@
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--paper); color: var(--ink); font-size: 14px; }
   .shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; position: relative; transition: grid-template-columns 0.2s ease; }
   .shell.sidebar-collapsed { grid-template-columns: 0px 1fr; }
-  aside { background: var(--surface); border-right: 1px solid var(--line); padding: 20px 14px; overflow: hidden; white-space: nowrap; transition: padding 0.2s ease; }
+  aside { background: var(--surface); border-right: 1px solid var(--line); padding: 20px 14px; overflow-y: auto; overflow-x: hidden; white-space: nowrap; transition: padding 0.2s ease; position: sticky; top: 0; align-self: start; height: 100vh; }
   .shell.sidebar-collapsed aside { padding: 20px 0; border-right: none; }
-  #sidebarToggle { position: absolute; top: 22px; left: 220px; transform: translateX(-50%); width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center; z-index: 20; transition: left 0.2s ease; color: var(--sub); }
+  #sidebarToggle { position: fixed; top: 50%; left: 220px; transform: translate(-50%, -50%); width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 17px; line-height: 1; display: flex; align-items: center; justify-content: center; z-index: 50; transition: left 0.2s ease; color: var(--sub); box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
   #sidebarToggle:hover { border-color: var(--teal-500); color: var(--teal-700); }
   .shell.sidebar-collapsed #sidebarToggle { left: 0px; }
-  .sidebar-widgets { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
-  .sidebar-widget-loading { font-size: 11.5px; color: var(--sub); }
-  .sidebar-widget-title { font-size: 10.5px; font-weight: 700; color: var(--sub); letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 8px; }
-  .sidebar-widget-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; padding: 4px 0; }
-  .sidebar-widget-row.severe { color: var(--red); font-weight: 600; }
-  .sidebar-holiday-row { font-size: 11.5px; padding: 4px 0; color: var(--ink); }
-  .sidebar-holiday-row .days { color: var(--sub); font-size: 10.5px; }
   .theme-toggle { width: 46px; height: 26px; border-radius: 20px; border: none; background: var(--teal-700); position: relative; cursor: pointer; padding: 0; flex-shrink: 0; transition: background 0.2s ease; }
   .theme-toggle-knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: white; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--teal-700); transition: left 0.2s ease; }
   body.dark .theme-toggle-knob { left: 23px; }
@@ -46,7 +40,8 @@
   .btn { border: 1px solid var(--line); background: var(--surface); padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
   .btn:hover { border-color: var(--teal-500); background: var(--teal-100); }
   .config-toggle { font-size: 12px; color: var(--teal-700); cursor: pointer; text-decoration: underline; margin-bottom: 10px; display: inline-block; }
-  .upload-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; }
+  .upload-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; transition: border-color 0.15s, background 0.15s; }
+  .upload-panel.drag-over { border-color: var(--teal-500); border-style: dashed; background: var(--teal-100); }
   .upload-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .last-updated { font-size: 12.5px; color: var(--sub); }
   .last-updated b { color: var(--ink); }
@@ -62,7 +57,9 @@
   .stat-card.active { background: var(--teal-100); border-color: var(--teal-500); box-shadow: inset 0 0 0 1px var(--teal-500); }
   .stat-label { font-size: 12px; color: var(--sub); margin-bottom: 4px; }
   .stat-value { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
-  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; position: relative; }
+  .panel-snapshot-btn { position: absolute; top: 14px; right: 16px; width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--sub); z-index: 5; }
+  .panel-snapshot-btn:hover { border-color: var(--teal-500); color: var(--teal-700); }
   .panel h2 { font-size: 14px; margin: 0 0 14px; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -107,10 +104,6 @@
       <div class="nav-item" data-view="followups">Follow-Ups</div>
       <div class="nav-item" data-view="reports">Reports</div>
     </nav>
-
-    <div id="sidebarWidgets" class="sidebar-widgets">
-      <div class="sidebar-widget-loading">Loading weather...</div>
-    </div>
   </aside>
   <button id="sidebarToggle" title="Collapse sidebar">&#8249;</button>
 
@@ -129,7 +122,7 @@
       </div>
     </div>
 
-    <div class="upload-panel">
+    <div class="upload-panel" id="csvDropZone">
       <div class="upload-row">
         <div>
           <label class="btn" style="cursor:pointer;">
@@ -137,6 +130,7 @@
             <input type="file" id="csvFileInput" accept=".csv" style="display:none;">
           </label>
         </div>
+        <div style="font-size:11.5px;color:var(--sub);">or drag &amp; drop a file anywhere in this box</div>
         <div class="upload-step2" id="uploadStep2">
           <span class="file-chosen" id="fileChosenName"></span>
           <button class="btn" id="submitCsvBtn">Submit</button>
@@ -273,17 +267,51 @@ uploadFrame.addEventListener('load', () => {
 // time that view renders, since the button gets recreated whenever
 // the Reports view re-renders.
 
-csvFileInput.addEventListener('change', () => {
-  const file = csvFileInput.files[0];
+// Shared by both the "Choose CSV" click path and drag-and-drop -
+// whichever way a file arrives, it ends up here.
+let selectedCsvFile = null;
+
+function handleCsvFileSelected(file) {
   const step2 = document.getElementById('uploadStep2');
   const fileChosenName = document.getElementById('fileChosenName');
   if (!file) {
+    selectedCsvFile = null;
     step2.classList.remove('visible');
     return;
   }
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    uploadStatus.textContent = 'That doesn\'t look like a CSV file.';
+    uploadStatus.className = 'upload-status err';
+    return;
+  }
+  selectedCsvFile = file;
   fileChosenName.textContent = file.name;
   step2.classList.add('visible');
   uploadStatus.textContent = '';
+}
+
+csvFileInput.addEventListener('change', () => {
+  handleCsvFileSelected(csvFileInput.files[0]);
+});
+
+const csvDropZone = document.getElementById('csvDropZone');
+['dragenter', 'dragover'].forEach(evt => {
+  csvDropZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    csvDropZone.classList.add('drag-over');
+  });
+});
+['dragleave', 'drop'].forEach(evt => {
+  csvDropZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    csvDropZone.classList.remove('drag-over');
+  });
+});
+csvDropZone.addEventListener('drop', (e) => {
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) handleCsvFileSelected(file);
 });
 
 document.getElementById('submitCsvBtn').addEventListener('click', () => {
@@ -294,7 +322,7 @@ document.getElementById('submitCsvBtn').addEventListener('click', () => {
     configBox.classList.add('open');
     return;
   }
-  const file = csvFileInput.files[0];
+  const file = selectedCsvFile;
   if (!file) return;
 
   uploadStatus.textContent = 'Reading file...';
@@ -308,6 +336,7 @@ document.getElementById('submitCsvBtn').addEventListener('click', () => {
     uploadForm.submit();
     document.getElementById('uploadStep2').classList.remove('visible');
     csvFileInput.value = '';
+    selectedCsvFile = null;
   };
   reader.onerror = () => {
     uploadStatus.textContent = 'Could not read that file.';
@@ -501,223 +530,57 @@ function carrierLogoBadge(carrier) {
 // search can filter against it without re-fetching.
 let allShipmentsCache = [];
 
-/**
- * ============================================================
- * WEATHER + HOLIDAY CONTEXT
- * ============================================================
- * Both use free, no-API-key, CORS-friendly public APIs so this
- * works from a static GitHub Pages page with no backend proxy:
- *   - Open-Meteo (weather): https://open-meteo.com
- *   - Nager.Date (public holidays): https://date.nager.at
- *
- * Weather is looked up per-STATE (not per-city), since that's the
- * only destination granularity consistently available across both
- * carriers today (UPS's CSV export doesn't include a recipient city
- * column). Each state uses its capital city as a representative
- * point - not exact for a huge state, but good enough to catch
- * "there's a storm affecting this whole region."
- * ============================================================
- */
-const US_STATE_COORDS = {
-  AL: { name: 'Alabama', lat: 32.3617, lon: -86.2792 }, AK: { name: 'Alaska', lat: 58.3019, lon: -134.4197 },
-  AZ: { name: 'Arizona', lat: 33.4484, lon: -112.0740 }, AR: { name: 'Arkansas', lat: 34.7465, lon: -92.2896 },
-  CA: { name: 'California', lat: 38.5816, lon: -121.4944 }, CO: { name: 'Colorado', lat: 39.7392, lon: -104.9903 },
-  CT: { name: 'Connecticut', lat: 41.7658, lon: -72.6734 }, DE: { name: 'Delaware', lat: 39.1582, lon: -75.5244 },
-  FL: { name: 'Florida', lat: 30.4383, lon: -84.2807 }, GA: { name: 'Georgia', lat: 33.7490, lon: -84.3880 },
-  HI: { name: 'Hawaii', lat: 21.3069, lon: -157.8583 }, ID: { name: 'Idaho', lat: 43.6150, lon: -116.2023 },
-  IL: { name: 'Illinois', lat: 39.7817, lon: -89.6501 }, IN: { name: 'Indiana', lat: 39.7684, lon: -86.1581 },
-  IA: { name: 'Iowa', lat: 41.5868, lon: -93.6250 }, KS: { name: 'Kansas', lat: 39.0473, lon: -95.6752 },
-  KY: { name: 'Kentucky', lat: 38.2009, lon: -84.8733 }, LA: { name: 'Louisiana', lat: 30.4515, lon: -91.1871 },
-  ME: { name: 'Maine', lat: 44.3106, lon: -69.7795 }, MD: { name: 'Maryland', lat: 38.9784, lon: -76.4922 },
-  MA: { name: 'Massachusetts', lat: 42.3601, lon: -71.0589 }, MI: { name: 'Michigan', lat: 42.7325, lon: -84.5555 },
-  MN: { name: 'Minnesota', lat: 44.9537, lon: -93.0900 }, MS: { name: 'Mississippi', lat: 32.2988, lon: -90.1848 },
-  MO: { name: 'Missouri', lat: 38.5767, lon: -92.1735 }, MT: { name: 'Montana', lat: 46.5891, lon: -112.0391 },
-  NE: { name: 'Nebraska', lat: 40.8136, lon: -96.7026 }, NV: { name: 'Nevada', lat: 39.1638, lon: -119.7674 },
-  NH: { name: 'New Hampshire', lat: 43.2081, lon: -71.5376 }, NJ: { name: 'New Jersey', lat: 40.2206, lon: -74.7597 },
-  NM: { name: 'New Mexico', lat: 35.6870, lon: -105.9378 }, NY: { name: 'New York', lat: 42.6526, lon: -73.7562 },
-  NC: { name: 'North Carolina', lat: 35.7796, lon: -78.6382 }, ND: { name: 'North Dakota', lat: 46.8083, lon: -100.7837 },
-  OH: { name: 'Ohio', lat: 39.9612, lon: -82.9988 }, OK: { name: 'Oklahoma', lat: 35.4676, lon: -97.5164 },
-  OR: { name: 'Oregon', lat: 44.9429, lon: -123.0351 }, PA: { name: 'Pennsylvania', lat: 40.2732, lon: -76.8867 },
-  RI: { name: 'Rhode Island', lat: 41.8240, lon: -71.4128 }, SC: { name: 'South Carolina', lat: 34.0007, lon: -81.0348 },
-  SD: { name: 'South Dakota', lat: 44.3683, lon: -100.3510 }, TN: { name: 'Tennessee', lat: 36.1627, lon: -86.7816 },
-  TX: { name: 'Texas', lat: 30.2672, lon: -97.7431 }, UT: { name: 'Utah', lat: 40.7608, lon: -111.8910 },
-  VT: { name: 'Vermont', lat: 44.2601, lon: -72.5754 }, VA: { name: 'Virginia', lat: 37.5407, lon: -77.4360 },
-  WA: { name: 'Washington', lat: 47.0379, lon: -122.9007 }, WV: { name: 'West Virginia', lat: 38.3498, lon: -81.6326 },
-  WI: { name: 'Wisconsin', lat: 43.0731, lon: -89.4012 }, WY: { name: 'Wyoming', lat: 41.1400, lon: -104.8202 },
-  DC: { name: 'D.C.', lat: 38.9072, lon: -77.0369 },
-};
-
-// Open-Meteo WMO weather codes, simplified to what we actually need:
-// a label, an emoji, and whether it counts as "severe enough to flag."
-const WEATHER_CODE_MAP = {
-  0: { label: 'Clear', emoji: '☀️', severe: false }, 1: { label: 'Mostly clear', emoji: '🌤️', severe: false },
-  2: { label: 'Partly cloudy', emoji: '⛅', severe: false }, 3: { label: 'Overcast', emoji: '☁️', severe: false },
-  45: { label: 'Fog', emoji: '🌫️', severe: false }, 48: { label: 'Fog', emoji: '🌫️', severe: false },
-  51: { label: 'Light drizzle', emoji: '🌦️', severe: false }, 53: { label: 'Drizzle', emoji: '🌦️', severe: false },
-  55: { label: 'Heavy drizzle', emoji: '🌧️', severe: false }, 56: { label: 'Freezing drizzle', emoji: '🌧️', severe: true },
-  57: { label: 'Freezing drizzle', emoji: '🌧️', severe: true }, 61: { label: 'Light rain', emoji: '🌧️', severe: false },
-  63: { label: 'Rain', emoji: '🌧️', severe: false }, 65: { label: 'Heavy rain', emoji: '🌧️', severe: true },
-  66: { label: 'Freezing rain', emoji: '🌨️', severe: true }, 67: { label: 'Freezing rain', emoji: '🌨️', severe: true },
-  71: { label: 'Light snow', emoji: '❄️', severe: false }, 73: { label: 'Snow', emoji: '❄️', severe: true },
-  75: { label: 'Heavy snow', emoji: '❄️', severe: true }, 77: { label: 'Snow grains', emoji: '🌨️', severe: false },
-  80: { label: 'Rain showers', emoji: '🌦️', severe: false }, 81: { label: 'Rain showers', emoji: '🌧️', severe: false },
-  82: { label: 'Violent showers', emoji: '⛈️', severe: true }, 85: { label: 'Snow showers', emoji: '🌨️', severe: true },
-  86: { label: 'Heavy snow showers', emoji: '🌨️', severe: true }, 95: { label: 'Thunderstorm', emoji: '⛈️', severe: true },
-  96: { label: 'Thunderstorm w/ hail', emoji: '⛈️', severe: true }, 99: { label: 'Thunderstorm w/ hail', emoji: '⛈️', severe: true },
-};
-
-let weatherCache = {};
-let holidaysCache = [];
-let weatherHolidaysLoaded = false;
-let weatherHolidaysLoading = false;
 
 /**
- * Fetches weather for the states where currently-active (not yet
- * delivered) shipments are actually headed, and upcoming US public
- * holidays. Runs once per page load - results are cached and just
- * re-displayed (no re-fetch) on every subsequent Overview re-render,
- * e.g. clicking a time-frame pill.
+ * Injects a small camera icon into the top-right corner of every
+ * .panel currently in the DOM (idempotent - skips panels that
+ * already have one), wired to capture that panel as a PNG via
+ * html2canvas. Called at the end of every render function that
+ * creates panels, so it's safe/cheap to call repeatedly.
  */
-async function loadWeatherAndHolidays() {
-  if (weatherHolidaysLoading || weatherHolidaysLoaded) return;
-  weatherHolidaysLoading = true;
-
-  try {
-    // Which states actually matter right now: active shipments only,
-    // ranked by how many are headed there, capped at the top 8 to
-    // keep this to a reasonable number of API calls.
-    const active = allShipmentsCache.filter(s => !s['Delivered Date']);
-    const countByState = {};
-    active.forEach(s => {
-      const state = (s['Destination'] || '').toString().trim().toUpperCase();
-      if (US_STATE_COORDS[state]) countByState[state] = (countByState[state] || 0) + 1;
+function attachSnapshotButtons() {
+  document.querySelectorAll('.panel').forEach(panel => {
+    if (panel.querySelector('.panel-snapshot-btn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'panel-snapshot-btn';
+    btn.title = 'Save a snapshot of this section as an image';
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+      '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>' +
+      '<circle cx="12" cy="13" r="3.5" stroke="currentColor" stroke-width="1.8"/></svg>';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      capturePanelSnapshot(panel);
     });
-    const topStates = Object.keys(countByState).sort((a, b) => countByState[b] - countByState[a]).slice(0, 8);
-
-    const weatherResults = await Promise.allSettled(topStates.map(async state => {
-      const { lat, lon } = US_STATE_COORDS[state];
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit`;
-      const res = await fetch(url);
-      const data = await res.json();
-      const code = data.current.weather_code;
-      const info = WEATHER_CODE_MAP[code] || { label: 'Unknown', emoji: '❔', severe: false };
-      return { state, shipmentCount: countByState[state], temp: Math.round(data.current.temperature_2m), ...info };
-    }));
-
-    weatherCache = {};
-    weatherResults.forEach(r => {
-      if (r.status === 'fulfilled') weatherCache[r.value.state] = r.value;
-    });
-
-    try {
-      const holidayRes = await fetch('https://date.nager.at/api/v3/NextPublicHolidays/US');
-      holidaysCache = holidayRes.ok ? await holidayRes.json() : [];
-    } catch (e) {
-      holidaysCache = [];
-    }
-
-    weatherHolidaysLoaded = true;
-  } catch (e) {
-    // Fail quietly - weather/holidays are a nice-to-have, not core
-    // dashboard functionality. Don't let a network hiccup here break
-    // anything else.
-    weatherHolidaysLoaded = true;
-  } finally {
-    weatherHolidaysLoading = false;
-    renderSidebarWidgets();
-  }
+    panel.appendChild(btn);
+  });
 }
 
-/**
- * Renders compact weather + holiday widgets into the sidebar (not
- * the main content area) - this means they're visible on every page
- * (Shipments, Exceptions, Reports, etc.), not just Overview, since
- * the sidebar is always present. Shown for every operator on every
- * device automatically once the page loads - this isn't a per-user
- * preference, it's baked into the page itself.
- */
-function renderSidebarWidgets() {
-  const container = document.getElementById('sidebarWidgets');
-  if (!container) return;
-
-  if (weatherHolidaysLoading && !weatherHolidaysLoaded) {
-    container.innerHTML = '<div class="sidebar-widget-loading">Loading weather...</div>';
+function capturePanelSnapshot(panel) {
+  if (typeof html2canvas === 'undefined') {
+    alert('Snapshot library failed to load - check your internet connection and try again.');
     return;
   }
+  const titleEl = panel.querySelector('h2');
+  const name = titleEl ? titleEl.textContent.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'panel-snapshot';
+  const btn = panel.querySelector('.panel-snapshot-btn');
+  if (btn) btn.style.visibility = 'hidden'; // don't capture the button itself in the image
 
-  const states = Object.values(weatherCache);
-  const weatherHtml = states.length === 0
-    ? '<div class="sidebar-widget-loading">No weather data.</div>'
-    : states.slice(0, 5).map(w => `
-        <div class="sidebar-widget-row ${w.severe ? 'severe' : ''}" title="${w.label} - ${w.shipmentCount} active shipment${w.shipmentCount === 1 ? '' : 's'}">
-          <span>${w.emoji} ${w.state}</span>
-          <span>${w.temp}&deg;F</span>
-        </div>
-      `).join('');
-
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const upcoming = holidaysCache.slice(0, 3).map(h => {
-    const d = new Date(h.date + 'T00:00:00');
-    const daysUntil = Math.round((d - today) / (1000 * 60 * 60 * 24));
-    return { ...h, daysUntil };
+  const bg = getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#ffffff';
+  html2canvas(panel, { backgroundColor: bg, scale: 2 }).then(canvas => {
+    if (btn) btn.style.visibility = '';
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name + '-' + Utilities_formatDateISO(new Date()) + '.png';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }).catch(err => {
+    if (btn) btn.style.visibility = '';
+    alert('Could not capture snapshot: ' + err.message);
   });
-  const holidaysHtml = upcoming.length === 0
-    ? '<div class="sidebar-widget-loading">No upcoming holidays.</div>'
-    : upcoming.map(h => `
-        <div class="sidebar-holiday-row">
-          ${h.localName || h.name}
-          <span class="days">&mdash; ${h.daysUntil === 0 ? 'today' : h.daysUntil + 'd'}</span>
-        </div>
-      `).join('');
-
-  container.innerHTML = `
-    <div class="sidebar-widget-title">Weather</div>
-    ${weatherHtml}
-    <div class="sidebar-widget-title" style="margin-top:16px;">Holidays (US)</div>
-    ${holidaysHtml}
-  `;
 }
-
-/**
- * A single "heads up" banner only shown when there's actually
- * something worth flagging - severe weather affecting active
- * shipments, or a holiday coming up soon enough to matter. Silence
- * (no banner) is intentional when nothing's notable, rather than
- * showing an empty/reassuring banner every day.
- */
-function buildRiskBannerHtml() {
-  if (!weatherHolidaysLoaded) return '';
-
-  const severeStates = Object.values(weatherCache).filter(w => w.severe);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const soonHoliday = holidaysCache.find(h => {
-    const d = new Date(h.date + 'T00:00:00');
-    const daysUntil = Math.round((d - today) / (1000 * 60 * 60 * 24));
-    return daysUntil >= 0 && daysUntil <= 5;
-  });
-
-  if (severeStates.length === 0 && !soonHoliday) return '';
-
-  const parts = [];
-  if (severeStates.length > 0) {
-    const totalAffected = severeStates.reduce((sum, w) => sum + w.shipmentCount, 0);
-    const stateList = severeStates.map(w => w.state).join(', ');
-    parts.push(`${severeStates[0].emoji} Severe weather (${severeStates.map(w => w.label.toLowerCase()).join(', ')}) in ${stateList}, affecting ${totalAffected} active shipment${totalAffected === 1 ? '' : 's'}.`);
-  }
-  if (soonHoliday) {
-    const d = new Date(soonHoliday.date + 'T00:00:00');
-    const daysUntil = Math.round((d - today) / (1000 * 60 * 60 * 24));
-    parts.push(`📅 ${soonHoliday.localName || soonHoliday.name} is ${daysUntil === 0 ? 'today' : 'in ' + daysUntil + ' day' + (daysUntil === 1 ? '' : 's')} - expect possible carrier delays.`);
-  }
-
-  return `
-    <div class="panel" style="border-color:var(--amber);background:#fbf1de33;margin-bottom:16px;padding:12px 18px;">
-      <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:4px;">Heads Up</div>
-      ${parts.map(p => `<div style="font-size:13px;color:var(--ink);margin-bottom:2px;">${p}</div>`).join('')}
-    </div>
-  `;
-}
-
 
 function detailRow(s) {
   return `<td>${s['Tracking Number'] || ''}</td><td>${s['Carrier'] || ''}</td><td>${s['Q-order'] || ''}</td>
@@ -836,16 +699,21 @@ document.getElementById('content').addEventListener('click', (e) => {
 
 // ---- Search by tracking number or Q-order ----
 const searchInput = document.getElementById('searchInput');
+searchInput.placeholder = 'Search tracking # or Q-order (comma-separate for multiple)...';
 let searchDebounce = null;
 searchInput.addEventListener('input', () => {
   clearTimeout(searchDebounce);
   searchDebounce = setTimeout(() => {
-    const query = searchInput.value.trim().toLowerCase();
+    const rawQuery = searchInput.value.trim();
     document.querySelectorAll('.stat-card.active').forEach(el => el.classList.remove('active'));
-    if (!query) {
+    if (!rawQuery) {
       hideDetailPanel();
       return;
     }
+
+    // Multiple tracking numbers / Q-orders can be searched at once -
+    // split on commas, whitespace, or newlines, match ANY of them.
+    const terms = rawQuery.split(/[,\s]+/).map(t => t.toLowerCase()).filter(Boolean);
 
     // Search now respects whichever list view is currently active -
     // e.g. searching while on the Shipments page with "Last 7 Days"
@@ -865,9 +733,10 @@ searchInput.addEventListener('input', () => {
     const matches = basePool.filter(s => {
       const tracking = (s['Tracking Number'] || '').toString().toLowerCase();
       const qorder = (s['Q-order'] || '').toString().toLowerCase();
-      return tracking.includes(query) || qorder.includes(query);
+      return terms.some(term => tracking.includes(term) || qorder.includes(term));
     });
-    showDetailPanel('Search results for "' + searchInput.value.trim() + '"', matches);
+    const label = terms.length > 1 ? terms.length + ' search terms' : '"' + rawQuery + '"';
+    showDetailPanel('Search results for ' + label, matches);
   }, 200);
 });
 
@@ -932,17 +801,24 @@ function getDateRangeBounds(filters) {
   if (filters.preset === 'custom') {
     return { from: parseISODateLocal(filters.from), to: parseISODateLocal(filters.to) };
   }
+  if (filters.preset === 'customDays') {
+    const f = new Date(today); f.setDate(f.getDate() - (filters.days - 1));
+    return { from: f, to: today };
+  }
   return { from: null, to: null }; // 'all'
 }
 
 // Overview's own time-frame selector - simpler than the Shipments/
 // Exceptions/Follow-Ups filter bar (just one click, no Apply step),
 // since it's a single quick selector rather than several fields
-// being configured together.
+// being configured together. "customDays" is a slider-driven "last
+// N days" option, separate from the Shipments/Exceptions/Follow-Ups
+// filter bar's "custom" (which uses explicit From/To date pickers).
 let overviewTimeFilter = 'all';
+let overviewCustomDays = 14;
 
 function getOverviewFilteredShipments() {
-  const { from, to } = getDateRangeBounds({ preset: overviewTimeFilter });
+  const { from, to } = getDateRangeBounds({ preset: overviewTimeFilter, days: overviewCustomDays });
   if (!from && !to) return allShipmentsCache;
   return allShipmentsCache.filter(s => {
     const d = parseShipDate(s);
@@ -1135,6 +1011,7 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
       }
       onFilterChange();
     });
+  attachSnapshotButtons();
 }
 
 let currentActiveView = 'overview';
@@ -1348,6 +1225,7 @@ function renderReportsView() {
       URL.revokeObjectURL(url);
     });
   }
+  attachSnapshotButtons();
 }
 
 // Small local helper since Google's Utilities.formatDate isn't
@@ -1415,6 +1293,7 @@ function renderPaginatedView(containerId, list, page, title, onPageChange, sortS
       if (th && th.dataset.sortField) onSortClick(th.dataset.sortField);
     });
   }
+  attachSnapshotButtons();
 }
 
 function renderDashboard(shipments, snapshots) {
@@ -1438,7 +1317,6 @@ function renderDashboard(shipments, snapshots) {
     'Live data from your Shipment Dashboard Data sheet (' + carriersPresent.join(' + ') + ')';
 
   renderOverviewContent();
-  loadWeatherAndHolidays();
 }
 
 const TIME_FRAME_PILLS = [
@@ -1447,6 +1325,7 @@ const TIME_FRAME_PILLS = [
   { key: 'last7', label: 'Last 7 Days' },
   { key: 'last14', label: 'Last 14 Days' },
   { key: 'last30', label: 'Last 30 Days' },
+  { key: 'customDays', label: 'Custom' },
 ];
 
 /**
@@ -1478,8 +1357,6 @@ function renderOverviewContent() {
   );
 
   content.innerHTML = `
-    ${buildRiskBannerHtml()}
-
     <div class="panel" style="margin-bottom:16px;padding:12px 18px;">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <span style="font-size:11px;color:var(--sub);margin-right:4px;">TIME FRAME:</span>
@@ -1487,6 +1364,13 @@ function renderOverviewContent() {
           <button class="time-pill" data-preset="${p.key}" style="padding:6px 14px;border-radius:20px;border:1px solid ${overviewTimeFilter === p.key ? 'var(--teal-700)' : 'var(--line)'};background:${overviewTimeFilter === p.key ? 'var(--teal-700)' : 'white'};color:${overviewTimeFilter === p.key ? 'white' : 'var(--ink)'};font-size:12.5px;font-weight:${overviewTimeFilter === p.key ? '600' : '400'};cursor:pointer;">${p.label}</button>
         `).join('')}
       </div>
+      ${overviewTimeFilter === 'customDays' ? `
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
+          <span style="font-size:12px;color:var(--sub);white-space:nowrap;">Last <strong id="customDaysLabel">${overviewCustomDays}</strong> day${overviewCustomDays === 1 ? '' : 's'}</span>
+          <input type="range" id="customDaysSlider" min="1" max="90" value="${overviewCustomDays}" style="flex:1;max-width:320px;accent-color:var(--teal-700);">
+          <span style="font-size:11px;color:var(--sub);">90</span>
+        </div>
+      ` : ''}
     </div>
 
     <div class="stats">
@@ -1535,6 +1419,23 @@ function renderOverviewContent() {
     </div>
   `;
 
+  const customDaysSlider = document.getElementById('customDaysSlider');
+  if (customDaysSlider) {
+    // 'input' fires continuously while dragging - just update the
+    // label text (cheap, doesn't touch the slider's own DOM node).
+    // Re-rendering the whole page on every tick would destroy and
+    // recreate the slider mid-drag, breaking the drag gesture in
+    // most browsers. The actual data recompute only happens on
+    // 'change', which fires once when the drag is released.
+    customDaysSlider.addEventListener('input', (e) => {
+      document.getElementById('customDaysLabel').textContent = e.target.value;
+    });
+    customDaysSlider.addEventListener('change', (e) => {
+      overviewCustomDays = parseInt(e.target.value, 10);
+      renderOverviewContent();
+    });
+  }
+
   // ---- Carrier comparison ----
   const byCarrier = {};
   shipments.forEach(s => {
@@ -1551,6 +1452,15 @@ function renderOverviewContent() {
     tr.innerHTML = `<td><div class="carrier-name-cell">${carrierLogoBadge(c)}${c}</div></td><td>${stats.total}</td><td>${stats.exceptions}</td><td>${rate}%</td>`;
     carrierBody.appendChild(tr);
   });
+
+  // DHL support isn't built yet (still needs a sample CSV export to
+  // build a parser against) - show it in the comparison table anyway
+  // so it's visible as a planned carrier, not silently absent.
+  if (!byCarrier['DHL']) {
+    const dhlRow = document.createElement('tr');
+    dhlRow.innerHTML = `<td><div class="carrier-name-cell">${carrierLogoBadge('DHL')}DHL</div></td><td colspan="3" style="color:var(--sub);font-style:italic;">Work in progress - not yet integrated</td>`;
+    carrierBody.appendChild(dhlRow);
+  }
 
   // ---- Aging buckets (computed once here, used by both the Summary
   // text below and the donut chart later) ----
@@ -1621,6 +1531,7 @@ function renderOverviewContent() {
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { y: { beginAtZero: true } } },
     });
   }
+  attachSnapshotButtons();
 }
 
 // ---- Light/Dark mode ----
