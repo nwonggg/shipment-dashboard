@@ -67,6 +67,18 @@
   th { color: var(--sub); font-weight: 600; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--line); }
   tbody tr { border-bottom: 1px solid var(--line); }
   .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .inline-editable-date { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 125px; }
+  .exc-row-mild { background: #fdf6e8; }
+  .exc-row-warn { background: #fbead8; }
+  .exc-row-severe { background: #fbe2dc; }
+  body.dark .exc-row-mild { background: #3a3320; }
+  body.dark .exc-row-warn { background: #3d2c20; }
+  body.dark .exc-row-severe { background: #3f2620; }
+  th[draggable="true"] { cursor: grab; user-select: none; }
+  th[draggable="true"]:hover { background: var(--teal-100); }
+  th.drag-over-col { border-left: 2px solid var(--teal-700); }
+  a.tracking-link { color: var(--teal-700); text-decoration: underline; }
+  .inline-editable-date:hover { border-color: var(--teal-500); }
   .badge.warn { background: #fbf1de; color: var(--amber); }
   .badge.err { background: #fbe6de; color: var(--red); }
   .badge.ok { background: #e2f3e6; color: var(--green); }
@@ -166,7 +178,7 @@
     <div class="panel" id="detailPanel" style="display:none;">
       <h2 id="detailPanelTitle"></h2>
       <table>
-        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th></tr></thead>
+        <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Origin</th><th>Destination</th><th>Shipping Condition</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th><th>First Follow Up Date</th><th>Last Follow Up Date</th></tr></thead>
         <tbody id="detailTableBody"></tbody>
       </table>
     </div>
@@ -343,6 +355,59 @@ document.getElementById('submitCsvBtn').addEventListener('click', () => {
     uploadStatus.className = 'upload-status err';
   };
   reader.readAsText(file);
+});
+
+/**
+ * ============================================================
+ * INLINE FIELD EDITING (First/Last Follow-Up Date)
+ * ============================================================
+ * Reuses the same hidden-iframe POST pattern as CSV upload and
+ * email generation. Updates the local cache optimistically so the
+ * table reflects the change immediately - since (same cross-origin
+ * limitation as everywhere else in this file) we can't reliably
+ * read back a confirmed success/failure from the response.
+ * ============================================================
+ */
+function submitFieldUpdate(trackingNumber, field, value) {
+  const workerUrl = workerUrlInput.value.trim();
+  if (!workerUrl) {
+    alert('Set your Web App URL first (see Web App settings below).');
+    return;
+  }
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = workerUrl;
+  form.target = 'uploadFrame';
+  form.style.display = 'none';
+  const addField = (name, val) => {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = val;
+    form.appendChild(input);
+  };
+  addField('action', 'updateField');
+  addField('trackingNumber', trackingNumber);
+  addField('field', field);
+  addField('value', value);
+  document.body.appendChild(form);
+  form.submit();
+  setTimeout(() => form.remove(), 1000);
+}
+
+document.addEventListener('change', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('inline-editable-date')) return;
+  const trackingNumber = e.target.dataset.tracking;
+  const field = e.target.dataset.field;
+  const value = e.target.value;
+
+  // Optimistic update - reflect the change in the cached data right
+  // away rather than waiting on a response we likely can't read
+  // anyway (cross-origin iframe read limitation, same as elsewhere).
+  const shipment = allShipmentsCache.find(s => s['Tracking Number'] === trackingNumber);
+  if (shipment) shipment[field] = value;
+
+  submitFieldUpdate(trackingNumber, field, value);
 });
 
 async function loadLastUpdated() {
@@ -540,6 +605,7 @@ let allShipmentsCache = [];
  */
 function attachSnapshotButtons() {
   document.querySelectorAll('.panel').forEach(panel => {
+    if (panel.classList.contains('no-snapshot')) return;
     if (panel.querySelector('.panel-snapshot-btn')) return;
     const btn = document.createElement('button');
     btn.className = 'panel-snapshot-btn';
@@ -582,10 +648,25 @@ function capturePanelSnapshot(panel) {
   });
 }
 
+function shippingConditionBadge(condition) {
+  if (condition === 'DRY ICE') {
+    return '<span class="badge" style="background:#e3f0fb;color:#1a5f8f;">&#10052; DRY ICE</span>';
+  }
+  if (condition === 'AMBIENT') {
+    return '<span class="badge ok">AMBIENT</span>';
+  }
+  return '<span style="color:var(--sub);">Unknown</span>';
+}
+
 function detailRow(s) {
-  return `<td>${s['Tracking Number'] || ''}</td><td>${s['Carrier'] || ''}</td><td>${s['Q-order'] || ''}</td>
-    <td>${s['Destination'] || ''}</td><td>${s['Status'] || ''}</td><td>${s['Days Delayed'] || 0}</td>
-    <td>${s['Issue Type'] || ''}</td><td>${s['Next Action'] || ''}</td><td>${s['Owner'] || ''}</td>`;
+  const tn = s['Tracking Number'] || '';
+  return `<td>${tn}</td><td>${s['Carrier'] || ''}</td><td>${s['Q-order'] || ''}</td>
+    <td>${s['Origin'] || ''}</td><td>${s['Destination'] || ''}</td>
+    <td>${shippingConditionBadge(s['Shipping Condition'])}</td>
+    <td>${s['Status'] || ''}</td><td>${s['Days Delayed'] || 0}</td>
+    <td>${s['Issue Type'] || ''}</td><td>${s['Next Action'] || ''}</td><td>${s['Owner'] || ''}</td>
+    <td><input type="date" class="inline-editable-date" data-tracking="${tn}" data-field="First Follow Up Date" value="${s['First Follow Up Date'] || ''}"></td>
+    <td><input type="date" class="inline-editable-date" data-tracking="${tn}" data-field="Last Follow Up Date" value="${s['Last Follow Up Date'] || ''}"></td>`;
 }
 
 function showDetailPanel(title, list) {
@@ -893,7 +974,7 @@ function exportListToCsv(list, filenamePrefix) {
  * sub-container beneath it. Shared by Shipments, Exceptions, and
  * Follow-Ups since they're all the same kind of filterable list.
  */
-function renderFilterableView(containerId, filterKey, baseList, page, title, onPageChange, onFilterChange) {
+function renderFilterableView(containerId, filterKey, baseList, page, title, onPageChange, onFilterChange, customTableRenderer) {
   const filters = viewFilters[filterKey];
   const carriersAvailable = [...new Set(allShipmentsCache.map(s => s['Carrier'] || 'Unknown'))].sort();
   const statusesAvailable = [...new Set(allShipmentsCache.map(s => s['Status']).filter(Boolean))].sort();
@@ -1000,17 +1081,21 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
     exportListToCsv(currentSorted, filterKey);
   });
 
-  renderPaginatedView(containerId + '_tableArea', sorted, page, title, onPageChange,
-    { col: filters.sortCol, dir: filters.sortDir },
-    (field) => {
-      if (filters.sortCol === field) {
-        filters.sortDir = filters.sortDir === 'asc' ? 'desc' : 'asc';
-      } else {
-        filters.sortCol = field;
-        filters.sortDir = 'asc';
-      }
-      onFilterChange();
-    });
+  if (customTableRenderer) {
+    customTableRenderer(containerId + '_tableArea', sorted);
+  } else {
+    renderPaginatedView(containerId + '_tableArea', sorted, page, title, onPageChange,
+      { col: filters.sortCol, dir: filters.sortDir },
+      (field) => {
+        if (filters.sortCol === field) {
+          filters.sortDir = filters.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          filters.sortCol = field;
+          filters.sortDir = 'asc';
+        }
+        onFilterChange();
+      });
+  }
   attachSnapshotButtons();
 }
 
@@ -1051,11 +1136,173 @@ function renderShipmentsView() {
     () => { shipmentsPage = 0; renderShipmentsView(); });
 }
 
+/**
+ * ============================================================
+ * EXCEPTIONS VIEW - CUSTOM RENDERING
+ * ============================================================
+ * The Exceptions page gets its own table layout instead of the
+ * generic one used by Shipments/Follow-Ups, modeled after the
+ * operator's own working sheet: separate sections per carrier,
+ * draggable/reorderable columns, tracking numbers linked directly
+ * to the carrier's official tracking page, and row-level color
+ * coding by delay severity.
+ * ============================================================
+ */
+
+// Links straight to each carrier's own tracking page (opens in a new
+// tab) rather than trying to embed live tracking data inline - this
+// avoids extra API calls and duplicated data, and gives operators
+// the full carrier-side view (POD photos, signature, full scan
+// history) that we're not trying to replicate here.
+function getCarrierTrackingUrl(carrier, trackingNumber) {
+  if (!trackingNumber) return null;
+  if (carrier === 'UPS') return 'https://www.ups.com/track?loc=en_US&tracknum=' + encodeURIComponent(trackingNumber);
+  if (carrier === 'FedEx') return 'https://www.fedex.com/fedextrack/?trknbr=' + encodeURIComponent(trackingNumber);
+  if (carrier === 'DHL') return 'https://www.dhl.com/us-en/home/tracking.html?tracking-id=' + encodeURIComponent(trackingNumber);
+  return null;
+}
+
+// Days since Ship Date - if delivered, counts through Delivered Date
+// instead of today. Matches the "Days Shipped" column on the
+// operator's working sheet (total transit time), which is a
+// different metric than "Days Delayed" (days past the expected date).
+function computeDaysShipped(s) {
+  const shipRaw = s['Ship Date'];
+  if (!shipRaw) return '';
+  const shipDate = new Date(shipRaw);
+  if (isNaN(shipDate.getTime())) return '';
+  const endRaw = s['Delivered Date'];
+  const end = endRaw ? new Date(endRaw) : new Date();
+  const diff = Math.round((end - shipDate) / (1000 * 60 * 60 * 24));
+  return diff >= 0 ? diff : '';
+}
+
+function rowSeverityClass(s) {
+  const days = Number(s['Days Delayed']) || 0;
+  if (days >= 6) return 'exc-row-severe';
+  if (days >= 3) return 'exc-row-warn';
+  if (days >= 1) return 'exc-row-mild';
+  return '';
+}
+
+const EXCEPTIONS_DEFAULT_COLUMNS = [
+  { key: 'qOrder', label: 'Q-order', field: 'Q-order' },
+  { key: 'tracking', label: 'Tracking Number', type: 'trackingLink' },
+  { key: 'origin', label: 'Origin', field: 'Origin' },
+  { key: 'condition', label: 'Shipping Condition', type: 'conditionBadge' },
+  { key: 'region', label: 'Region', field: 'Region' },
+  { key: 'destination', label: 'Destination', field: 'Destination' },
+  { key: 'shipDate', label: 'Ship Date', field: 'Ship Date' },
+  { key: 'expectedDelivery', label: 'Expected Delivery', field: 'Expected Delivery' },
+  { key: 'daysShipped', label: 'Days Shipped', type: 'daysShipped' },
+  { key: 'status', label: 'Status', field: 'Status' },
+  { key: 'issueType', label: 'Issue Type', field: 'Issue Type' },
+  { key: 'nextAction', label: 'Next Action', field: 'Next Action' },
+  { key: 'owner', label: 'Owner', field: 'Owner' },
+  { key: 'firstFollowup', label: 'First Follow Up Date', field: 'First Follow Up Date', type: 'editableDate' },
+  { key: 'lastFollowup', label: 'Last Follow Up Date', field: 'Last Follow Up Date', type: 'editableDate' },
+];
+
+// Column order persists per-browser via localStorage - dragging a
+// column reorders it for every carrier's table at once, and the
+// order survives a page reload.
+function getExceptionsColumnOrder() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('exceptionsColumnOrder') || 'null');
+    const validKeys = new Set(EXCEPTIONS_DEFAULT_COLUMNS.map(c => c.key));
+    if (Array.isArray(saved) && saved.length === EXCEPTIONS_DEFAULT_COLUMNS.length && saved.every(k => validKeys.has(k))) {
+      return saved.map(k => EXCEPTIONS_DEFAULT_COLUMNS.find(c => c.key === k));
+    }
+  } catch (e) { /* fall through to default order */ }
+  return EXCEPTIONS_DEFAULT_COLUMNS.slice();
+}
+
+function saveExceptionsColumnOrder(columns) {
+  localStorage.setItem('exceptionsColumnOrder', JSON.stringify(columns.map(c => c.key)));
+}
+
+function renderExceptionCell(col, s) {
+  if (col.type === 'trackingLink') {
+    const tn = s['Tracking Number'] || '';
+    const url = getCarrierTrackingUrl(s['Carrier'], tn);
+    return url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
+  }
+  if (col.type === 'conditionBadge') return shippingConditionBadge(s['Shipping Condition']);
+  if (col.type === 'daysShipped') return computeDaysShipped(s);
+  if (col.type === 'editableDate') {
+    const tn = s['Tracking Number'] || '';
+    return `<input type="date" class="inline-editable-date" data-tracking="${tn}" data-field="${col.field}" value="${s[col.field] || ''}">`;
+  }
+  return s[col.field] || '';
+}
+
+/**
+ * Renders one table per carrier (UPS, FedEx, DHL) instead of a
+ * single combined table, with draggable/reorderable column headers
+ * shared across all three. No pagination - exception lists are
+ * small enough (tens, not thousands of rows) that showing everything
+ * at once is more useful for operators than clicking through pages.
+ */
+function renderExceptionsCarrierTables(containerId, list) {
+  const container = document.getElementById(containerId);
+  const columns = getExceptionsColumnOrder();
+  const carriers = ['UPS', 'FedEx', 'DHL'];
+
+  let html = '';
+  carriers.forEach(carrier => {
+    const carrierList = list.filter(s => (s['Carrier'] || 'Unknown') === carrier);
+    html += `<div class="panel" style="margin-bottom:14px;">
+      <h2 style="display:flex;align-items:center;gap:8px;">${carrierLogoBadge(carrier)}${carrier} Exceptions (${carrierList.length})</h2>`;
+
+    if (carrier === 'DHL' && carrierList.length === 0) {
+      html += '<div class="empty-state">DHL not yet integrated - work in progress.</div>';
+    } else if (carrierList.length === 0) {
+      html += `<div class="empty-state">No ${carrier} exceptions right now.</div>`;
+    } else {
+      html += `<div style="overflow-x:auto;"><table>
+        <thead><tr>${columns.map((col, i) => `<th draggable="true" data-col-index="${i}">${col.label}</th>`).join('')}</tr></thead>
+        <tbody>${carrierList.map(s => `<tr class="${rowSeverityClass(s)}">${columns.map(col => `<td>${renderExceptionCell(col, s)}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div>`;
+    }
+    html += '</div>';
+  });
+
+  container.innerHTML = html;
+
+  // Drag-and-drop column reordering - applies to every carrier table
+  // at once since they all share the same column order.
+  let dragSrcIndex = null;
+  container.querySelectorAll('th[draggable="true"]').forEach(th => {
+    th.addEventListener('dragstart', () => {
+      dragSrcIndex = parseInt(th.dataset.colIndex, 10);
+    });
+    th.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      th.classList.add('drag-over-col');
+    });
+    th.addEventListener('dragleave', () => th.classList.remove('drag-over-col'));
+    th.addEventListener('drop', (e) => {
+      e.preventDefault();
+      th.classList.remove('drag-over-col');
+      const targetIndex = parseInt(th.dataset.colIndex, 10);
+      if (dragSrcIndex === null || dragSrcIndex === targetIndex) return;
+      const cols = getExceptionsColumnOrder();
+      const [moved] = cols.splice(dragSrcIndex, 1);
+      cols.splice(targetIndex, 0, moved);
+      saveExceptionsColumnOrder(cols);
+      renderExceptionsCarrierTables(containerId, list);
+    });
+  });
+
+  attachSnapshotButtons();
+}
+
 function renderExceptionsView() {
   const flagged = allShipmentsCache.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
   renderFilterableView('exceptionsView', 'exceptions', flagged, exceptionsPage, 'All Exceptions',
     (p) => { exceptionsPage = p; renderExceptionsView(); },
-    () => { exceptionsPage = 0; renderExceptionsView(); });
+    () => { exceptionsPage = 0; renderExceptionsView(); },
+    renderExceptionsCarrierTables);
 }
 
 /**
@@ -1247,7 +1494,7 @@ function renderPaginatedView(containerId, list, page, title, onPageChange, sortS
   const start = safePage * PAGE_SIZE;
   const pageRows = list.slice(start, start + PAGE_SIZE);
 
-  const columns = ['Tracking Number', 'Carrier', 'Q-order', 'Destination', 'Status', 'Days Delayed', 'Issue Type', 'Next Action', 'Owner'];
+  const columns = ['Tracking Number', 'Carrier', 'Q-order', 'Origin', 'Destination', 'Shipping Condition', 'Status', 'Days Delayed', 'Issue Type', 'Next Action', 'Owner', 'First Follow Up Date', 'Last Follow Up Date'];
   const th = (field) => {
     const arrow = sortState && sortState.col === field ? (sortState.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
     return onSortClick
@@ -1357,7 +1604,7 @@ function renderOverviewContent() {
   );
 
   content.innerHTML = `
-    <div class="panel" style="margin-bottom:16px;padding:12px 18px;">
+    <div class="panel no-snapshot" style="margin-bottom:16px;padding:12px 18px;">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <span style="font-size:11px;color:var(--sub);margin-right:4px;">TIME FRAME:</span>
         ${TIME_FRAME_PILLS.map(p => `
@@ -1412,7 +1659,7 @@ function renderOverviewContent() {
       <div class="panel">
         <h2>Exception Shipments (${flagged.length})</h2>
         <table>
-          <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th></tr></thead>
+          <thead><tr><th>Tracking Number</th><th>Carrier</th><th>Q-order</th><th>Origin</th><th>Destination</th><th>Shipping Condition</th><th>Status</th><th>Days Delayed</th><th>Issue Type</th><th>Next Action</th><th>Owner</th><th>First Follow Up Date</th><th>Last Follow Up Date</th></tr></thead>
           <tbody id="exceptionsTableBody"></tbody>
         </table>
       </div>
