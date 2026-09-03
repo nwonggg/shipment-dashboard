@@ -895,7 +895,7 @@ function getDateRangeBounds(filters) {
 // being configured together. "customDays" is a slider-driven "last
 // N days" option, separate from the Shipments/Exceptions/Follow-Ups
 // filter bar's "custom" (which uses explicit From/To date pickers).
-let overviewTimeFilter = 'all';
+let overviewTimeFilter = 'today';
 let overviewCustomDays = 14;
 
 function getOverviewFilteredShipments() {
@@ -1581,8 +1581,8 @@ function renderDashboard(shipments, snapshots) {
 }
 
 const TIME_FRAME_PILLS = [
-  { key: 'all', label: 'All Time' },
   { key: 'today', label: 'Today' },
+  { key: 'yesterday', label: 'Yesterday' },
   { key: 'last7', label: 'Last 7 Days' },
   { key: 'last14', label: 'Last 14 Days' },
   { key: 'last30', label: 'Last 30 Days' },
