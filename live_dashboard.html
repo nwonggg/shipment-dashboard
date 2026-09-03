@@ -1771,11 +1771,25 @@ function renderOverviewContent() {
       data: {
         labels: dates,
         datasets: [
-          { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3 },
-          { label: 'Exceptions', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3 },
+          { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+          { label: 'Exceptions', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'yExceptions' },
         ],
       },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { y: { beginAtZero: true } } },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } },
+        scales: {
+          // Total Shipments is typically ~100x larger than
+          // Exceptions - sharing one axis crushed the Exceptions
+          // line down to an invisible flat line near zero, even
+          // when the underlying numbers were completely correct.
+          // Giving Exceptions its own right-side axis makes it
+          // readable on its own terms.
+          y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Total Shipments' } },
+          yExceptions: { beginAtZero: true, position: 'right', title: { display: true, text: 'Exceptions' }, grid: { drawOnChartArea: false } },
+        },
+      },
     });
   }
   attachSnapshotButtons();
