@@ -1133,7 +1133,8 @@ document.querySelector('nav').addEventListener('click', (e) => {
 function renderShipmentsView() {
   renderFilterableView('shipmentsView', 'shipments', allShipmentsCache, shipmentsPage, 'All Shipments',
     (p) => { shipmentsPage = p; renderShipmentsView(); },
-    () => { shipmentsPage = 0; renderShipmentsView(); });
+    () => { shipmentsPage = 0; renderShipmentsView(); },
+    (id, list) => renderCarrierSplitTables(id, list, 'Shipments'));
 }
 
 /**
@@ -1243,7 +1244,19 @@ function renderExceptionCell(col, s) {
  * small enough (tens, not thousands of rows) that showing everything
  * at once is more useful for operators than clicking through pages.
  */
-function renderExceptionsCarrierTables(containerId, list) {
+/**
+ * Renders one table per carrier (UPS, FedEx, DHL) instead of a
+ * single combined table, with draggable/reorderable column headers
+ * shared across all three - and shared across every page that uses
+ * this (Shipments, Exceptions, Follow-Ups all use the same column
+ * order state, so reordering once applies everywhere). No
+ * pagination - even the full Shipments list is small enough that
+ * showing everything per-carrier beats clicking through pages.
+ *
+ * `listLabel` customizes each section's heading, e.g. "Exceptions",
+ * "Shipments", "Follow-Ups Needed".
+ */
+function renderCarrierSplitTables(containerId, list, listLabel) {
   const container = document.getElementById(containerId);
   const columns = getExceptionsColumnOrder();
   const carriers = ['UPS', 'FedEx', 'DHL'];
@@ -1252,12 +1265,12 @@ function renderExceptionsCarrierTables(containerId, list) {
   carriers.forEach(carrier => {
     const carrierList = list.filter(s => (s['Carrier'] || 'Unknown') === carrier);
     html += `<div class="panel" style="margin-bottom:14px;">
-      <h2 style="display:flex;align-items:center;gap:8px;">${carrierLogoBadge(carrier)}${carrier} Exceptions (${carrierList.length})</h2>`;
+      <h2 style="display:flex;align-items:center;gap:8px;">${carrierLogoBadge(carrier)}${carrier} ${listLabel} (${carrierList.length})</h2>`;
 
     if (carrier === 'DHL' && carrierList.length === 0) {
       html += '<div class="empty-state">DHL not yet integrated - work in progress.</div>';
     } else if (carrierList.length === 0) {
-      html += `<div class="empty-state">No ${carrier} exceptions right now.</div>`;
+      html += `<div class="empty-state">No ${carrier} ${listLabel.toLowerCase()} right now.</div>`;
     } else {
       html += `<div style="overflow-x:auto;"><table>
         <thead><tr>${columns.map((col, i) => `<th draggable="true" data-col-index="${i}">${col.label}</th>`).join('')}</tr></thead>
@@ -1290,7 +1303,7 @@ function renderExceptionsCarrierTables(containerId, list) {
       const [moved] = cols.splice(dragSrcIndex, 1);
       cols.splice(targetIndex, 0, moved);
       saveExceptionsColumnOrder(cols);
-      renderExceptionsCarrierTables(containerId, list);
+      renderCarrierSplitTables(containerId, list, listLabel);
     });
   });
 
@@ -1302,7 +1315,7 @@ function renderExceptionsView() {
   renderFilterableView('exceptionsView', 'exceptions', flagged, exceptionsPage, 'All Exceptions',
     (p) => { exceptionsPage = p; renderExceptionsView(); },
     () => { exceptionsPage = 0; renderExceptionsView(); },
-    renderExceptionsCarrierTables);
+    (id, list) => renderCarrierSplitTables(id, list, 'Exceptions'));
 }
 
 /**
@@ -1322,7 +1335,8 @@ function getFollowupsNeeded() {
 function renderFollowupsView() {
   renderFilterableView('followupsView', 'followups', getFollowupsNeeded(), followupsPage, 'Follow-Ups Needed',
     (p) => { followupsPage = p; renderFollowupsView(); },
-    () => { followupsPage = 0; renderFollowupsView(); });
+    () => { followupsPage = 0; renderFollowupsView(); },
+    (id, list) => renderCarrierSplitTables(id, list, 'Follow-Ups'));
 }
 
 /**
