@@ -1081,20 +1081,21 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
     exportListToCsv(currentSorted, filterKey);
   });
 
+  const handleSortClick = (field) => {
+    if (filters.sortCol === field) {
+      filters.sortDir = filters.sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      filters.sortCol = field;
+      filters.sortDir = 'asc';
+    }
+    onFilterChange();
+  };
+
   if (customTableRenderer) {
-    customTableRenderer(containerId + '_tableArea', sorted);
+    customTableRenderer(containerId + '_tableArea', sorted, { col: filters.sortCol, dir: filters.sortDir }, handleSortClick);
   } else {
     renderPaginatedView(containerId + '_tableArea', sorted, page, title, onPageChange,
-      { col: filters.sortCol, dir: filters.sortDir },
-      (field) => {
-        if (filters.sortCol === field) {
-          filters.sortDir = filters.sortDir === 'asc' ? 'desc' : 'asc';
-        } else {
-          filters.sortCol = field;
-          filters.sortDir = 'asc';
-        }
-        onFilterChange();
-      });
+      { col: filters.sortCol, dir: filters.sortDir }, handleSortClick);
   }
   attachSnapshotButtons();
 }
@@ -1134,7 +1135,7 @@ function renderShipmentsView() {
   renderFilterableView('shipmentsView', 'shipments', allShipmentsCache, shipmentsPage, 'All Shipments',
     (p) => { shipmentsPage = p; renderShipmentsView(); },
     () => { shipmentsPage = 0; renderShipmentsView(); },
-    (id, list) => renderCarrierSplitTables(id, list, 'Shipments'));
+    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Shipments', sortState, onSortClick));
 }
 
 /**
@@ -1256,10 +1257,29 @@ function renderExceptionCell(col, s) {
  * `listLabel` customizes each section's heading, e.g. "Exceptions",
  * "Shipments", "Follow-Ups Needed".
  */
-function renderCarrierSplitTables(containerId, list, listLabel) {
+// Most columns sort by their own field directly. A few use a
+// 'type' instead of a raw field (tracking link, condition badge) -
+// these map to the underlying data field they actually display.
+// Days Shipped is computed on the fly, not a stored field, so it's
+// left out of sorting rather than sorting on nothing meaningful.
+function getColumnSortKey(col) {
+  if (col.field) return col.field;
+  if (col.key === 'tracking') return 'Tracking Number';
+  if (col.key === 'condition') return 'Shipping Condition';
+  return null;
+}
+
+function renderCarrierSplitTables(containerId, list, listLabel, sortState, onSortClick) {
   const container = document.getElementById(containerId);
   const columns = getExceptionsColumnOrder();
   const carriers = ['UPS', 'FedEx', 'DHL'];
+
+  const th = (col, i) => {
+    const sortKey = getColumnSortKey(col);
+    const arrow = sortState && sortKey && sortState.col === sortKey ? (sortState.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
+    const cursorStyle = sortKey ? 'cursor:pointer;' : 'cursor:grab;';
+    return `<th draggable="true" data-col-index="${i}" data-sort-key="${sortKey || ''}" style="${cursorStyle}">${col.label}${arrow}</th>`;
+  };
 
   let html = '';
   carriers.forEach(carrier => {
@@ -1273,7 +1293,7 @@ function renderCarrierSplitTables(containerId, list, listLabel) {
       html += `<div class="empty-state">No ${carrier} ${listLabel.toLowerCase()} right now.</div>`;
     } else {
       html += `<div style="overflow-x:auto;"><table>
-        <thead><tr>${columns.map((col, i) => `<th draggable="true" data-col-index="${i}">${col.label}</th>`).join('')}</tr></thead>
+        <thead><tr>${columns.map((col, i) => th(col, i)).join('')}</tr></thead>
         <tbody>${carrierList.map(s => `<tr class="${rowSeverityClass(s)}">${columns.map(col => `<td>${renderExceptionCell(col, s)}</td>`).join('')}</tr>`).join('')}</tbody>
       </table></div>`;
     }
@@ -1283,9 +1303,16 @@ function renderCarrierSplitTables(containerId, list, listLabel) {
   container.innerHTML = html;
 
   // Drag-and-drop column reordering - applies to every carrier table
-  // at once since they all share the same column order.
+  // at once since they all share the same column order. Click-to-sort
+  // coexists on the same header: a plain click (no drag) fires a
+  // normal 'click' event even on a draggable element, so both
+  // gestures work without conflicting.
   let dragSrcIndex = null;
   container.querySelectorAll('th[draggable="true"]').forEach(th => {
+    th.addEventListener('click', () => {
+      const sortKey = th.dataset.sortKey;
+      if (sortKey && onSortClick) onSortClick(sortKey);
+    });
     th.addEventListener('dragstart', () => {
       dragSrcIndex = parseInt(th.dataset.colIndex, 10);
     });
@@ -1303,7 +1330,7 @@ function renderCarrierSplitTables(containerId, list, listLabel) {
       const [moved] = cols.splice(dragSrcIndex, 1);
       cols.splice(targetIndex, 0, moved);
       saveExceptionsColumnOrder(cols);
-      renderCarrierSplitTables(containerId, list, listLabel);
+      renderCarrierSplitTables(containerId, list, listLabel, sortState, onSortClick);
     });
   });
 
@@ -1315,7 +1342,7 @@ function renderExceptionsView() {
   renderFilterableView('exceptionsView', 'exceptions', flagged, exceptionsPage, 'All Exceptions',
     (p) => { exceptionsPage = p; renderExceptionsView(); },
     () => { exceptionsPage = 0; renderExceptionsView(); },
-    (id, list) => renderCarrierSplitTables(id, list, 'Exceptions'));
+    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Exceptions', sortState, onSortClick));
 }
 
 /**
@@ -1336,7 +1363,7 @@ function renderFollowupsView() {
   renderFilterableView('followupsView', 'followups', getFollowupsNeeded(), followupsPage, 'Follow-Ups Needed',
     (p) => { followupsPage = p; renderFollowupsView(); },
     () => { followupsPage = 0; renderFollowupsView(); },
-    (id, list) => renderCarrierSplitTables(id, list, 'Follow-Ups'));
+    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Follow-Ups', sortState, onSortClick));
 }
 
 /**
