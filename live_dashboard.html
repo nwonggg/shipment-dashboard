@@ -397,6 +397,17 @@ function submitFieldUpdate(trackingNumber, field, value) {
   setTimeout(() => form.remove(), 1000);
 }
 
+// One-time, global click-outside handler for the Country filter
+// popover(s) - attached once here rather than inside the filter bar
+// render function, which runs on every filter change and would
+// otherwise accumulate a new document-level listener each time.
+document.addEventListener('click', (e) => {
+  if (e.target.classList && e.target.classList.contains('filter-country-btn')) return;
+  document.querySelectorAll('.filter-country-popover').forEach(p => {
+    if (!p.contains(e.target)) p.style.display = 'none';
+  });
+});
+
 document.addEventListener('change', (e) => {
   if (!e.target.classList || !e.target.classList.contains('inline-editable-date')) return;
   const trackingNumber = e.target.dataset.tracking;
@@ -1157,8 +1168,8 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
         </div>
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Carrier</label>
-          <div style="display:flex;gap:12px;">
-            ${carriersAvailable.map(c => `
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${carriersAvailable.slice().sort().map(c => `
               <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer;">
                 <input type="checkbox" class="${containerId}_carrierCb" value="${c}" ${!filters.carriers || filters.carriers.has(c) ? 'checked' : ''}>
                 ${c}
@@ -1168,8 +1179,8 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
         </div>
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Region</label>
-          <div style="display:flex;gap:12px;">
-            ${['AMER', 'EMEA', 'APAC'].map(r => `
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${['AMER', 'APAC', 'EMEA'].map(r => `
               <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer;">
                 <input type="checkbox" class="${containerId}_regionCb" value="${r}" ${!filters.regions || filters.regions.has(r) ? 'checked' : ''}>
                 ${r}
@@ -1179,7 +1190,7 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
         </div>
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Domestic / International</label>
-          <div style="display:flex;gap:12px;">
+          <div style="display:flex;flex-direction:column;gap:6px;">
             ${['Domestic', 'International'].map(l => `
               <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer;">
                 <input type="checkbox" class="${containerId}_localityCb" value="${l}" ${!filters.locality || filters.locality.has(l) ? 'checked' : ''}>
@@ -1188,11 +1199,19 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
             `).join('')}
           </div>
         </div>
-        <div>
-          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Country (Ctrl/Cmd-click for multiple)</label>
-          <select id="${containerId}_countries" multiple style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;min-width:120px;height:70px;">
-            ${countriesAvailable.map(c => `<option value="${c}" ${!filters.countries || filters.countries.has(c) ? 'selected' : ''}>${c}</option>`).join('')}
-          </select>
+        <div style="position:relative;">
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Country</label>
+          <button type="button" id="${containerId}_countriesBtn" style="padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;background:var(--surface);color:var(--ink);cursor:pointer;min-width:130px;text-align:left;">
+            ${!filters.countries ? 'All Countries' : filters.countries.size + ' selected'}
+          </button>
+          <div id="${containerId}_countriesPopover" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px;max-height:180px;overflow-y:auto;z-index:20;box-shadow:0 2px 8px rgba(0,0,0,0.12);min-width:130px;">
+            ${countriesAvailable.slice().sort().map(c => `
+              <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 0;white-space:nowrap;">
+                <input type="checkbox" class="${containerId}_countryCb" value="${c}" ${!filters.countries || filters.countries.has(c) ? 'checked' : ''}>
+                ${c}
+              </label>
+            `).join('')}
+          </div>
         </div>
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Status</label>
@@ -1250,9 +1269,21 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
       filters.locality = checked.length === 2 ? null : new Set(checked);
     });
   });
-  document.getElementById(containerId + '_countries').addEventListener('change', (e) => {
-    const selected = Array.from(e.target.selectedOptions).map(o => o.value);
-    filters.countries = selected.length === 0 || selected.length === countriesAvailable.length ? null : new Set(selected);
+  const countriesBtn = document.getElementById(containerId + '_countriesBtn');
+  const countriesPopover = document.getElementById(containerId + '_countriesPopover');
+  countriesBtn.classList.add('filter-country-btn');
+  countriesPopover.classList.add('filter-country-popover');
+  countriesBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.querySelectorAll('.filter-country-popover').forEach(p => { if (p !== countriesPopover) p.style.display = 'none'; });
+    countriesPopover.style.display = countriesPopover.style.display === 'none' ? 'block' : 'none';
+  });
+  document.querySelectorAll('.' + containerId + '_countryCb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = Array.from(document.querySelectorAll('.' + containerId + '_countryCb:checked')).map(el => el.value);
+      filters.countries = checked.length === 0 || checked.length === countriesAvailable.length ? null : new Set(checked);
+      countriesBtn.textContent = !filters.countries ? 'All Countries' : filters.countries.size + ' selected';
+    });
   });
   document.getElementById(containerId + '_status').addEventListener('change', (e) => {
     filters.status = e.target.value;
