@@ -508,6 +508,135 @@ async function loadDashboard() {
  * sentence patterns rather than genuinely composed text.
  * ============================================================
  */
+/**
+ * ============================================================
+ * PRIORITY PACKAGES (rule-based, free, always reliable)
+ * ============================================================
+ * Ranks currently-flagged shipments by computed urgency, so
+ * operators get a specific, actionable list of which tracking
+ * numbers to act on first - not just an aggregate count. This is
+ * the reliable backbone; AI Insights (below) narrates this same
+ * list in words, it never re-decides the ranking itself.
+ *
+ * Scoring is a starting point, not a confirmed rule - see the
+ * Exceptions Discovery doc for the open questions this should
+ * eventually be validated against with the operator.
+ */
+function computePriorityPackages(shipments, limit) {
+  const flagged = shipments.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
+
+  const scored = flagged.map(s => {
+    const days = Number(s['Days Delayed']) || 0;
+    let score = days * 10;
+    const reasons = [];
+
+    if (days > 0) reasons.push(days + ' day' + (days === 1 ? '' : 's') + ' past expected delivery');
+
+    if (s['Shipping Condition'] === 'DRY ICE') {
+      score += 50;
+      reasons.push('dry ice - time-sensitive');
+    }
+    if (!s['Next Action']) {
+      score += 15;
+      reasons.push('no action logged yet');
+    }
+    if (!s['Owner']) {
+      score += 10;
+      reasons.push('unassigned');
+    }
+    if (reasons.length === 0) reasons.push(s['Issue Type'] || 'flagged exception');
+
+    return { shipment: s, score: score, reason: reasons.join(', ') };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit || 5);
+}
+
+function renderPriorityPackages(shipments) {
+  const area = document.getElementById('priorityPackagesArea');
+  const top = computePriorityPackages(shipments, 5);
+
+  if (top.length === 0) {
+    area.innerHTML = '';
+    return;
+  }
+
+  area.innerHTML = `
+    <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:4px;">
+      <div style="font-size:11px;font-weight:700;color:var(--sub);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">
+        Priority Packages - act on these first
+      </div>
+      ${top.map(item => {
+        const s = item.shipment;
+        const tn = s['Tracking Number'] || '';
+        const url = getCarrierTrackingUrl(s['Carrier'], tn);
+        const linkedTn = url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;">
+          <div>${carrierLogoBadge(s['Carrier'])}<strong>${linkedTn}</strong> <span style="color:var(--sub);">- ${s['Q-order'] || ''} - ${s['Destination'] || ''}</span></div>
+          <div style="color:var(--red);text-align:right;">${item.reason}</div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+/**
+ * ============================================================
+ * AI INSIGHTS (Google Gemini, free tier - optional layer on top)
+ * ============================================================
+ * Sends the ALREADY-COMPUTED Priority Packages list and stats to
+ * Gemini and asks it to narrate them in plain English - it is
+ * explicitly instructed not to invent packages or change the
+ * ranking, only explain what's already been decided. Manual
+ * button trigger, not automatic, to keep API usage predictable.
+ * Requires GEMINI_API_KEY in Apps Script Script Properties - see
+ * roadmap for setup.
+ * ============================================================
+ */
+function buildAiInsightsPrompt(total, flagged, byCarrier, priorityList) {
+  const carrierLines = Object.keys(byCarrier).map(c =>
+    c + ': ' + byCarrier[c].total + ' shipments, ' + byCarrier[c].exceptions + ' exceptions'
+  ).join('; ');
+
+  const priorityLines = priorityList.map((item, i) =>
+    (i + 1) + '. ' + item.shipment['Tracking Number'] + ' (' + item.shipment['Carrier'] + ', ' +
+    item.shipment['Destination'] + ') - ' + item.reason
+  ).join('\n');
+
+  return 'You are writing a short, plain-English briefing for a shipping operations team at a biotech company. ' +
+    'Do not invent any packages or change the priority order below - only explain and contextualize what is given. ' +
+    'Keep it to 2-3 short sentences, direct and actionable, no filler.\n\n' +
+    'Total shipments tracked: ' + total + '\n' +
+    'Open exceptions: ' + flagged.length + '\n' +
+    'By carrier: ' + carrierLines + '\n\n' +
+    'Priority packages (already ranked, do not reorder):\n' + priorityLines;
+}
+
+function fetchAiInsights(promptText) {
+  return new Promise((resolve, reject) => {
+    const workerUrl = workerUrlInput.value.trim();
+    if (!workerUrl) {
+      reject(new Error('Set your Web App URL first (see Web App settings below).'));
+      return;
+    }
+    const callbackName = 'aiInsightsCallback_' + Math.random().toString(36).slice(2);
+    const script = document.createElement('script');
+    const cleanup = () => { delete window[callbackName]; script.remove(); };
+
+    window[callbackName] = (body) => {
+      cleanup();
+      if (body.success === false) reject(new Error(body.error || 'Unknown error'));
+      else resolve(body.text);
+    };
+    script.onerror = () => { cleanup(); reject(new Error('Could not reach the Web App - check the URL is correct and deployed.')); };
+
+    const url = workerUrl.replace(/\/$/, '') + '?action=aiInsights&prompt=' + encodeURIComponent(promptText) + '&callback=' + callbackName;
+    script.src = url;
+    document.body.appendChild(script);
+  });
+}
+
 function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
   const exceptionRate = total > 0 ? ((flagged.length / total) * 100).toFixed(1) : '0.0';
   const carriers = Object.keys(byCarrier);
@@ -1674,8 +1803,13 @@ function renderOverviewContent() {
 
     <div id="overviewWidgets">
       <div class="panel" id="summaryPanel">
-        <h2>Summary</h2>
-        <div id="summaryText" style="font-size:13.5px;line-height:1.6;color:var(--ink);"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h2 style="margin:0;">Summary</h2>
+          <button class="btn" id="generateAiInsightsBtn" style="font-size:12px;padding:6px 12px;">Generate AI Insights</button>
+        </div>
+        <div id="summaryText" style="font-size:13.5px;line-height:1.6;color:var(--ink);margin-bottom:14px;"></div>
+        <div id="aiInsightsArea"></div>
+        <div id="priorityPackagesArea"></div>
       </div>
 
       <div class="row2">
@@ -1765,6 +1899,30 @@ function renderOverviewContent() {
 
   document.getElementById('summaryText').innerHTML =
     buildSummaryText(total, flagged, atRisk, byCarrier, { onTime, d1to2, d3to5, d6plus });
+
+  renderPriorityPackages(shipments);
+
+  const aiInsightsBtn = document.getElementById('generateAiInsightsBtn');
+  aiInsightsBtn.onclick = () => {
+    const area = document.getElementById('aiInsightsArea');
+    aiInsightsBtn.disabled = true;
+    aiInsightsBtn.textContent = 'Generating...';
+    area.innerHTML = '';
+
+    const priorityList = computePriorityPackages(shipments, 5);
+    const prompt = buildAiInsightsPrompt(total, flagged, byCarrier, priorityList);
+
+    fetchAiInsights(prompt).then(text => {
+      area.innerHTML = `<div style="background:var(--teal-100);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;line-height:1.5;">
+        <span style="font-size:10px;font-weight:700;color:var(--teal-700);letter-spacing:0.5px;text-transform:uppercase;">AI Insights</span><br>${text}
+      </div>`;
+    }).catch(err => {
+      area.innerHTML = `<div style="color:var(--red);font-size:12.5px;margin-bottom:12px;">Could not generate insights: ${err.message}</div>`;
+    }).finally(() => {
+      aiInsightsBtn.disabled = false;
+      aiInsightsBtn.textContent = 'Generate AI Insights';
+    });
+  };
 
   // ---- Exceptions table ----
   const excBody = document.getElementById('exceptionsTableBody');
