@@ -626,8 +626,8 @@ function fetchAiInsights(promptText) {
 
     window[callbackName] = (body) => {
       cleanup();
-      if (body.success === false) reject(new Error(body.error || 'Unknown error'));
-      else resolve(body.text);
+      if (body.success === true && body.text) resolve(body.text);
+      else reject(new Error(body.error || 'Unexpected response - the Web App may need to be redeployed with the latest code (Deploy > Manage deployments > New version).'));
     };
     script.onerror = () => { cleanup(); reject(new Error('Could not reach the Web App - check the URL is correct and deployed.')); };
 
