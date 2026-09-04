@@ -159,8 +159,10 @@
     <form id="uploadForm" method="POST" target="uploadFrame" style="display:none;">
       <input type="hidden" name="csvData" id="csvDataField">
     </form>
-    <form id="emailForm" method="POST" target="uploadFrame" style="display:none;">
-      <input type="hidden" name="action" value="generateEmails">
+    <form id="emailDraftForm" method="POST" target="uploadFrame" style="display:none;">
+      <input type="hidden" name="action" value="draftEmail">
+      <input type="hidden" name="trackingNumber" id="emailDraftTrackingField">
+      <input type="hidden" name="template" id="emailDraftTemplateField">
     </form>
     <iframe name="uploadFrame" id="uploadFrame" style="display:none;"></iframe>
 
@@ -274,10 +276,10 @@ uploadFrame.addEventListener('load', () => {
   }, 800);
 });
 
-// Generate Carrier Emails now lives on the Reports page (see
-// renderReportsView) - its click listener is attached there each
-// time that view renders, since the button gets recreated whenever
-// the Reports view re-renders.
+// Per-shipment email drafts are attached inline wherever a tracking
+// number appears (Exceptions/Shipments/Follow-Ups tables, Priority
+// Packages) via attachEmailDraftActions(), called at the end of each
+// relevant render function.
 
 // Shared by both the "Choose CSV" click path and drag-and-drop -
 // whichever way a file arrives, it ends up here.
@@ -572,9 +574,13 @@ function renderPriorityPackages(shipments) {
         const tn = s['Tracking Number'] || '';
         const url = getCarrierTrackingUrl(s['Carrier'], tn);
         const linkedTn = url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
-        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;">
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;gap:10px;">
           <div>${carrierLogoBadge(s['Carrier'])}<strong>${linkedTn}</strong> <span style="color:var(--sub);">- ${s['Q-order'] || ''} - ${s['Destination'] || ''}</span></div>
-          <div style="color:var(--red);text-align:right;">${item.reason}</div>
+          <div style="color:var(--red);text-align:right;flex-shrink:0;">${item.reason}</div>
+          <select class="email-draft-select" data-tracking="${tn}" style="font-size:11px;padding:3px 4px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);flex-shrink:0;">
+            <option value="">Draft email...</option>
+            ${EMAIL_TEMPLATE_OPTIONS.map(t => `<option value="${t.key}">${t.label}</option>`).join('')}
+          </select>
         </div>`;
       }).join('')}
     </div>
@@ -966,9 +972,9 @@ let snapshotsCache = [];
 // Ship Date since that's the most natural "when did this happen" field
 // for an operator browsing shipments. carriers: null means "all".
 let viewFilters = {
-  shipments: { preset: 'all', from: '', to: '', carriers: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
-  exceptions: { preset: 'all', from: '', to: '', carriers: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
-  followups: { preset: 'all', from: '', to: '', carriers: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
+  shipments: { preset: 'today', from: '', to: '', carriers: null, regions: null, locality: null, countries: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
+  exceptions: { preset: 'all', from: '', to: '', carriers: null, regions: null, locality: null, countries: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
+  followups: { preset: 'all', from: '', to: '', carriers: null, regions: null, locality: null, countries: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
 };
 
 function parseShipDate(s) {
@@ -1060,6 +1066,18 @@ function applyListFilters(list, filters) {
   if (filters.carriers) {
     result = result.filter(s => filters.carriers.has(s['Carrier']));
   }
+  if (filters.regions) {
+    result = result.filter(s => filters.regions.has(s['Region'] || 'Unknown'));
+  }
+  if (filters.locality) {
+    result = result.filter(s => {
+      const isDomestic = s['Country'] === 'US';
+      return filters.locality.has(isDomestic ? 'Domestic' : 'International');
+    });
+  }
+  if (filters.countries) {
+    result = result.filter(s => filters.countries.has(s['Country'] || 'Unknown'));
+  }
   if (filters.status) {
     result = result.filter(s => s['Status'] === filters.status);
   }
@@ -1106,6 +1124,7 @@ function exportListToCsv(list, filenamePrefix) {
 function renderFilterableView(containerId, filterKey, baseList, page, title, onPageChange, onFilterChange, customTableRenderer) {
   const filters = viewFilters[filterKey];
   const carriersAvailable = [...new Set(allShipmentsCache.map(s => s['Carrier'] || 'Unknown'))].sort();
+  const countriesAvailable = [...new Set(allShipmentsCache.map(s => s['Country']).filter(Boolean))].sort();
   const statusesAvailable = [...new Set(allShipmentsCache.map(s => s['Status']).filter(Boolean))].sort();
   const ownersAvailable = [...new Set(allShipmentsCache.map(s => s['Owner']).filter(Boolean))].sort();
   const filtered = applyListFilters(baseList, filters);
@@ -1118,11 +1137,11 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Date Range (by Ship Date)</label>
           <select id="${containerId}_preset" style="padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
-            <option value="all" ${filters.preset === 'all' ? 'selected' : ''}>All Time</option>
             <option value="today" ${filters.preset === 'today' ? 'selected' : ''}>Today</option>
             <option value="yesterday" ${filters.preset === 'yesterday' ? 'selected' : ''}>Yesterday</option>
             <option value="last7" ${filters.preset === 'last7' ? 'selected' : ''}>Last 7 Days</option>
             <option value="last30" ${filters.preset === 'last30' ? 'selected' : ''}>Last 30 Days</option>
+            <option value="all" ${filters.preset === 'all' ? 'selected' : ''}>All Time</option>
             <option value="custom" ${filters.preset === 'custom' ? 'selected' : ''}>Custom Range</option>
           </select>
         </div>
@@ -1146,6 +1165,34 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
               </label>
             `).join('')}
           </div>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Region</label>
+          <div style="display:flex;gap:12px;">
+            ${['AMER', 'EMEA', 'APAC'].map(r => `
+              <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                <input type="checkbox" class="${containerId}_regionCb" value="${r}" ${!filters.regions || filters.regions.has(r) ? 'checked' : ''}>
+                ${r}
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Domestic / International</label>
+          <div style="display:flex;gap:12px;">
+            ${['Domestic', 'International'].map(l => `
+              <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                <input type="checkbox" class="${containerId}_localityCb" value="${l}" ${!filters.locality || filters.locality.has(l) ? 'checked' : ''}>
+                ${l}
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Country (Ctrl/Cmd-click for multiple)</label>
+          <select id="${containerId}_countries" multiple style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;min-width:120px;height:70px;">
+            ${countriesAvailable.map(c => `<option value="${c}" ${!filters.countries || filters.countries.has(c) ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
         </div>
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Status</label>
@@ -1190,6 +1237,22 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
       const checked = Array.from(document.querySelectorAll('.' + containerId + '_carrierCb:checked')).map(el => el.value);
       filters.carriers = checked.length === carriersAvailable.length ? null : new Set(checked);
     });
+  });
+  document.querySelectorAll('.' + containerId + '_regionCb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = Array.from(document.querySelectorAll('.' + containerId + '_regionCb:checked')).map(el => el.value);
+      filters.regions = checked.length === 3 ? null : new Set(checked);
+    });
+  });
+  document.querySelectorAll('.' + containerId + '_localityCb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = Array.from(document.querySelectorAll('.' + containerId + '_localityCb:checked')).map(el => el.value);
+      filters.locality = checked.length === 2 ? null : new Set(checked);
+    });
+  });
+  document.getElementById(containerId + '_countries').addEventListener('change', (e) => {
+    const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+    filters.countries = selected.length === 0 || selected.length === countriesAvailable.length ? null : new Set(selected);
   });
   document.getElementById(containerId + '_status').addEventListener('change', (e) => {
     filters.status = e.target.value;
@@ -1332,6 +1395,7 @@ const EXCEPTIONS_DEFAULT_COLUMNS = [
   { key: 'owner', label: 'Owner', field: 'Owner' },
   { key: 'firstFollowup', label: 'First Follow Up Date', field: 'First Follow Up Date', type: 'editableDate' },
   { key: 'lastFollowup', label: 'Last Follow Up Date', field: 'Last Follow Up Date', type: 'editableDate' },
+  { key: 'emailAction', label: 'Draft Email', type: 'emailAction' },
 ];
 
 // Column order persists per-browser via localStorage - dragging a
@@ -1352,6 +1416,16 @@ function saveExceptionsColumnOrder(columns) {
   localStorage.setItem('exceptionsColumnOrder', JSON.stringify(columns.map(c => c.key)));
 }
 
+const EMAIL_TEMPLATE_OPTIONS = [
+  { key: 'generalDelay', label: 'General Delay Follow-up' },
+  { key: 'dryIceReIce', label: 'Dry Ice Re-Ice Request' },
+  { key: 'claimInitiation', label: 'Claim Initiation (Lost/Damaged)' },
+  { key: 'missedDelivery', label: 'Missed Delivery Attempt' },
+  { key: 'clearanceDocs', label: 'Clearance/Customs Documentation' },
+  { key: 'customerDisputesReceipt', label: 'Customer Disputes Non-Receipt' },
+  { key: 'addressCorrection', label: 'Address Correction Needed' },
+];
+
 function renderExceptionCell(col, s) {
   if (col.type === 'trackingLink') {
     const tn = s['Tracking Number'] || '';
@@ -1364,8 +1438,51 @@ function renderExceptionCell(col, s) {
     const tn = s['Tracking Number'] || '';
     return `<input type="date" class="inline-editable-date" data-tracking="${tn}" data-field="${col.field}" value="${s[col.field] || ''}">`;
   }
+  if (col.type === 'emailAction') {
+    const tn = s['Tracking Number'] || '';
+    return `<select class="email-draft-select" data-tracking="${tn}" style="font-size:11.5px;padding:3px 4px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);">
+      <option value="">Draft email...</option>
+      ${EMAIL_TEMPLATE_OPTIONS.map(t => `<option value="${t.key}">${t.label}</option>`).join('')}
+    </select>`;
+  }
   return s[col.field] || '';
 }
+
+/**
+ * Submits a per-shipment email draft request via the hidden iframe
+ * form (same pattern as the CSV upload / field update actions) -
+ * we don't need to read the generated content back, just know it
+ * succeeded, so the simpler POST+iframe pattern is fine here.
+ */
+function submitEmailDraft(trackingNumber, templateKey, selectEl) {
+  const workerUrl = workerUrlInput.value.trim();
+  if (!workerUrl) {
+    alert('Set your Web App URL first (see Web App settings below).');
+    return;
+  }
+  document.getElementById('emailDraftTrackingField').value = trackingNumber;
+  document.getElementById('emailDraftTemplateField').value = templateKey;
+  const form = document.getElementById('emailDraftForm');
+  form.action = workerUrl;
+  form.submit();
+
+  if (selectEl) {
+    const original = selectEl.style.borderColor;
+    selectEl.style.borderColor = 'var(--teal-700)';
+    setTimeout(() => { selectEl.value = ''; selectEl.style.borderColor = original; }, 1200);
+  }
+}
+
+// Event delegation - handles email-draft dropdowns anywhere they
+// appear (Exceptions/Shipments/Follow-Ups tables, Priority Packages),
+// without needing to attach a listener to each one individually.
+document.addEventListener('change', (e) => {
+  if (e.target.classList.contains('email-draft-select')) {
+    const templateKey = e.target.value;
+    if (!templateKey) return;
+    submitEmailDraft(e.target.dataset.tracking, templateKey, e.target);
+  }
+});
 
 /**
  * Renders one table per carrier (UPS, FedEx, DHL) instead of a
@@ -1538,14 +1655,6 @@ function renderReportsView() {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:10px;">
         <h2 style="margin:0;">Deliveries by Day (${deliveriesByDay.length} days)</h2>
         <div style="display:flex;align-items:center;gap:12px;">
-          <button class="icon-btn" id="generateEmailsBtn" title="Generate carrier exception emails as Gmail drafts">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="2" y="4" width="20" height="16" rx="2" stroke="#b3432f" stroke-width="1.8"/>
-              <path d="M3 6L12 13L21 6" stroke="#b3432f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            Generate Carrier Emails
-          </button>
-          <span class="upload-status" id="emailStatus"></span>
           <button class="btn" id="downloadDeliveriesBtn">Download CSV</button>
         </div>
       </div>
@@ -1599,22 +1708,6 @@ function renderReportsView() {
     a.download = 'deliveries-by-day-' + Utilities_formatDateISO(new Date()) + '.csv';
     a.click();
     URL.revokeObjectURL(url);
-  });
-
-  document.getElementById('generateEmailsBtn').addEventListener('click', () => {
-    const workerUrl = workerUrlInput.value.trim();
-    const emailStatus = document.getElementById('emailStatus');
-    if (!workerUrl) {
-      emailStatus.textContent = 'Set your Web App URL first (see Web App settings below).';
-      emailStatus.className = 'upload-status err';
-      configBox.classList.add('open');
-      return;
-    }
-    emailStatus.textContent = 'Generating carrier email drafts...';
-    emailStatus.className = 'upload-status';
-    const emailForm = document.getElementById('emailForm');
-    emailForm.action = workerUrl;
-    emailForm.submit();
   });
 
   const sorted = snapshotsCache.slice().sort((a, b) => (b['Date'] || '').localeCompare(a['Date'] || ''));
