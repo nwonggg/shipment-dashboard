@@ -585,7 +585,7 @@ function renderPriorityPackages(shipments) {
         const tn = s['Tracking Number'] || '';
         const url = getCarrierTrackingUrl(s['Carrier'], tn);
         const linkedTn = url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
-        return `<div style="display:grid;grid-template-columns:1fr 220px 150px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;gap:10px;">
+        return `<div style="display:grid;grid-template-columns:420px 220px 150px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;gap:10px;">
           <div>${carrierLogoBadge(s['Carrier'])}<strong>${linkedTn}</strong> <span style="color:var(--sub);">- ${s['Q-order'] || ''} - ${s['Destination'] || ''}</span></div>
           <div style="color:var(--red);text-align:center;">${item.reason}</div>
           <select class="email-draft-select" data-tracking="${tn}" style="font-size:11px;padding:3px 4px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);justify-self:start;">
@@ -652,6 +652,105 @@ function fetchAiInsights(promptText) {
     script.src = url;
     document.body.appendChild(script);
   });
+}
+
+/**
+ * ============================================================
+ * NATURAL LANGUAGE QUERY BOX (Overview, above Summary)
+ * ============================================================
+ * AI (Gemini) is used ONLY to translate the question into
+ * structured filter criteria (JSON) - it never computes the answer
+ * itself. Those criteria are then applied with the same reliable,
+ * deterministic JS filtering logic used everywhere else on the
+ * dashboard. This avoids ever asking the model to count, list, or
+ * summarize actual shipment data directly, which risks it
+ * inventing plausible-looking but wrong results on real data it
+ * can't fully see.
+ * ============================================================
+ */
+function fetchChatQueryCriteria(queryText) {
+  return new Promise((resolve, reject) => {
+    const workerUrl = workerUrlInput.value.trim();
+    if (!workerUrl) {
+      reject(new Error('Set your Web App URL first (see Web App settings below).'));
+      return;
+    }
+    const callbackName = 'chatQueryCallback_' + Math.random().toString(36).slice(2);
+    const script = document.createElement('script');
+    const cleanup = () => { delete window[callbackName]; script.remove(); };
+
+    window[callbackName] = (body) => {
+      cleanup();
+      if (body.success === true && body.criteria) resolve(body.criteria);
+      else reject(new Error(body.error || 'Unexpected response - the Web App may need to be redeployed with the latest code (Deploy > Manage deployments > New version).'));
+    };
+    script.onerror = () => { cleanup(); reject(new Error('Could not reach the Web App - check the URL is correct and deployed.')); };
+
+    const url = workerUrl.replace(/\/$/, '') + '?action=chatQuery&query=' + encodeURIComponent(queryText) + '&callback=' + callbackName;
+    script.src = url;
+    document.body.appendChild(script);
+  });
+}
+
+// Applies AI-extracted criteria using the same plain, deterministic
+// filtering approach as the rest of the dashboard - every condition
+// here is a simple, auditable JS comparison, not an AI judgment call.
+function applyChatCriteria(shipments, criteria) {
+  let result = shipments;
+  if (criteria.daysDelayedMin !== undefined) result = result.filter(s => (Number(s['Days Delayed']) || 0) >= criteria.daysDelayedMin);
+  if (criteria.daysDelayedMax !== undefined) result = result.filter(s => (Number(s['Days Delayed']) || 0) <= criteria.daysDelayedMax);
+  if (criteria.carrier) result = result.filter(s => s['Carrier'] === criteria.carrier);
+  if (criteria.shippingCondition) result = result.filter(s => s['Shipping Condition'] === criteria.shippingCondition);
+  if (criteria.region) result = result.filter(s => s['Region'] === criteria.region);
+  if (criteria.country) result = result.filter(s => s['Country'] === criteria.country);
+  if (criteria.shipMonth !== undefined) {
+    result = result.filter(s => {
+      const d = parseShipDate(s);
+      return d && (d.getMonth() + 1) === criteria.shipMonth &&
+        (criteria.shipYear === undefined || d.getFullYear() === criteria.shipYear);
+    });
+  } else if (criteria.shipYear !== undefined) {
+    result = result.filter(s => {
+      const d = parseShipDate(s);
+      return d && d.getFullYear() === criteria.shipYear;
+    });
+  }
+  if (criteria.needsAttentionOnly) {
+    result = result.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
+  }
+  if (criteria.status) {
+    const needle = criteria.status.toLowerCase();
+    result = result.filter(s => (s['Status'] || '').toLowerCase().includes(needle));
+  }
+  return result;
+}
+
+function renderChatQueryResults(matches) {
+  const area = document.getElementById('chatQueryResults');
+  if (matches.length === 0) {
+    area.innerHTML = '<div style="font-size:13px;color:var(--sub);">No shipments matched that question.</div>';
+    return;
+  }
+  const capped = matches.slice(0, 25);
+  area.innerHTML = `
+    <div style="font-size:12px;color:var(--sub);margin-bottom:6px;">${matches.length} match${matches.length === 1 ? '' : 'es'}${matches.length > 25 ? ' (showing first 25)' : ''}</div>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Carrier</th><th>Tracking Number</th><th>Q-order</th><th>Destination</th><th>Status</th><th>Days Delayed</th></tr></thead>
+      <tbody>${capped.map(s => {
+        const tn = s['Tracking Number'] || '';
+        const url = getCarrierTrackingUrl(s['Carrier'], tn);
+        const linkedTn = url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
+        return `<tr class="${rowSeverityClass(s)}">
+          <td>${carrierLogoBadge(s['Carrier'])}${s['Carrier']}</td>
+          <td>${linkedTn}</td>
+          <td>${s['Q-order'] || ''}</td>
+          <td>${s['Destination'] || ''}</td>
+          <td>${s['Status'] || ''}</td>
+          <td>${s['Days Delayed'] || 0}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>
+  `;
 }
 
 function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
@@ -1960,6 +2059,19 @@ function renderOverviewContent() {
     <div id="overviewDetailArea" style="display:none;"></div>
 
     <div id="overviewWidgets">
+      <div class="panel" id="chatQueryPanel">
+        <h2 style="margin:0 0 8px 0;">Ask About Your Shipments</h2>
+        <div style="font-size:11.5px;color:var(--sub);margin-bottom:10px;">
+          Try something like "delayed items over 3 days in August" or "dry ice shipments to APAC" - this uses AI to
+          understand your question, but the actual results always come from your real data, not from the AI itself.
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="chatQueryInput" placeholder="Ask a question about your shipments..." style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:6px;font-size:13.5px;">
+          <button class="btn" id="chatQueryBtn" style="background:var(--teal-700);color:white;border-color:var(--teal-700);">Ask</button>
+        </div>
+        <div id="chatQueryResults" style="margin-top:12px;"></div>
+      </div>
+
       <div class="panel" id="summaryPanel">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
           <h2 style="margin:0;">Summary</h2>
@@ -2081,6 +2193,29 @@ function renderOverviewContent() {
       aiInsightsBtn.textContent = 'Generate AI Insights';
     });
   };
+
+  const chatQueryBtn = document.getElementById('chatQueryBtn');
+  const chatQueryInput = document.getElementById('chatQueryInput');
+  const runChatQuery = () => {
+    const queryText = chatQueryInput.value.trim();
+    const area = document.getElementById('chatQueryResults');
+    if (!queryText) return;
+    chatQueryBtn.disabled = true;
+    chatQueryBtn.textContent = 'Thinking...';
+    area.innerHTML = '';
+
+    fetchChatQueryCriteria(queryText).then(criteria => {
+      const matches = applyChatCriteria(allShipmentsCache, criteria);
+      renderChatQueryResults(matches);
+    }).catch(err => {
+      area.innerHTML = `<div style="color:var(--red);font-size:12.5px;">Could not answer that: ${err.message}</div>`;
+    }).finally(() => {
+      chatQueryBtn.disabled = false;
+      chatQueryBtn.textContent = 'Ask';
+    });
+  };
+  chatQueryBtn.onclick = runChatQuery;
+  chatQueryInput.onkeydown = (e) => { if (e.key === 'Enter') runChatQuery(); };
 
   // ---- Exceptions table ----
   const excBody = document.getElementById('exceptionsTableBody');
