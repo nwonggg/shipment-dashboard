@@ -587,7 +587,7 @@ function renderPriorityPackages(shipments) {
         const linkedTn = url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;gap:10px;">
           <div>${carrierLogoBadge(s['Carrier'])}<strong>${linkedTn}</strong> <span style="color:var(--sub);">- ${s['Q-order'] || ''} - ${s['Destination'] || ''}</span></div>
-          <div style="color:var(--red);text-align:center;flex-shrink:0;">${item.reason}</div>
+          <div style="color:var(--red);text-align:center;flex-shrink:0;width:320px;">${item.reason}</div>
           <select class="email-draft-select" data-tracking="${tn}" style="font-size:11px;padding:3px 4px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);flex-shrink:0;">
             <option value="">Draft email...</option>
             ${EMAIL_TEMPLATE_OPTIONS.map(t => `<option value="${t.key}">${t.label}</option>`).join('')}
