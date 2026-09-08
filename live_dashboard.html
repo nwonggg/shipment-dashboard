@@ -585,7 +585,7 @@ function renderPriorityPackages(shipments) {
         const tn = s['Tracking Number'] || '';
         const url = getCarrierTrackingUrl(s['Carrier'], tn);
         const linkedTn = url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
-        return `<div style="display:grid;grid-template-columns:420px 220px 150px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;gap:10px;">
+        return `<div style="display:grid;grid-template-columns:420px 1fr 170px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;gap:16px;">
           <div>${carrierLogoBadge(s['Carrier'])}<strong>${linkedTn}</strong> <span style="color:var(--sub);">- ${s['Q-order'] || ''} - ${s['Destination'] || ''}</span></div>
           <div style="color:var(--red);text-align:center;">${item.reason}</div>
           <select class="email-draft-select" data-tracking="${tn}" style="font-size:11px;padding:3px 4px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);justify-self:start;">
