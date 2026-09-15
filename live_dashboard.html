@@ -425,26 +425,42 @@ document.addEventListener('change', (e) => {
 // needs extra behavior: entering an initial for the first time also
 // auto-fills First Follow Up Date (if it isn't already set), per the
 // "whenever you put initial it fills first follow up date" request.
-document.addEventListener('change', (e) => {
-  if (!e.target.classList || !e.target.classList.contains('inline-editable-owner')) return;
-  const trackingNumber = e.target.dataset.tracking;
-  const value = e.target.value;
+// Handled on 'blur' (via capture, since blur doesn't bubble) rather
+// than 'change' alone - this guarantees it fires the moment the
+// field loses focus, regardless of how the browser tracks whether
+// the value "changed" for change-event purposes.
+function handleOwnerFieldCommit(target) {
+  const trackingNumber = target.dataset.tracking;
+  const value = target.value;
 
   const shipment = allShipmentsCache.find(s => s['Tracking Number'] === trackingNumber);
-  const hadNoOwnerBefore = shipment && !shipment['Owner'];
-  if (shipment) shipment['Owner'] = value;
+  if (!shipment) return;
+
+  const hadNoOwnerBefore = !shipment['Owner'];
+  const valueChanged = shipment['Owner'] !== value;
+  if (!valueChanged) return; // nothing to do - avoid redundant writes on every blur
+
+  shipment['Owner'] = value;
   submitFieldUpdate(trackingNumber, 'Owner', value);
 
-  if (hadNoOwnerBefore && value && shipment && !shipment['First Follow Up Date']) {
+  if (hadNoOwnerBefore && value && !shipment['First Follow Up Date']) {
     const todayStr = Utilities_formatDateISO(new Date());
     shipment['First Follow Up Date'] = todayStr;
     submitFieldUpdate(trackingNumber, 'First Follow Up Date', todayStr);
-    // Reflect the auto-filled date immediately in any visible date
-    // input for this row, without waiting for a full re-render.
     document.querySelectorAll('input.inline-editable-date[data-tracking="' + trackingNumber + '"][data-field="First Follow Up Date"]').forEach(el => {
       el.value = todayStr;
     });
   }
+}
+
+document.addEventListener('blur', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('inline-editable-owner')) return;
+  handleOwnerFieldCommit(e.target);
+}, true); // capture: true - required since 'blur' doesn't bubble
+
+document.addEventListener('change', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('inline-editable-owner')) return;
+  handleOwnerFieldCommit(e.target);
 });
 
 // Shipping Condition inline dropdown (manual override) - lets an
@@ -1180,10 +1196,15 @@ function formatCountryLabel(code) {
  */
 function renderFilterableView(containerId, filterKey, baseList, page, title, onPageChange, onFilterChange, customTableRenderer, viewKey) {
   const filters = viewFilters[filterKey];
-  const carriersAvailable = [...new Set(allShipmentsCache.map(s => s['Carrier'] || 'Unknown'))].sort();
-  const countriesAvailable = [...new Set(allShipmentsCache.map(s => s['Country']).filter(Boolean))].sort();
-  const statusesAvailable = [...new Set(allShipmentsCache.map(s => s['Status']).filter(Boolean))].sort();
-  const ownersAvailable = [...new Set(allShipmentsCache.map(s => s['Owner']).filter(Boolean))].sort();
+  // Scoped to THIS view's own baseList (e.g. only-ever-non-delivered
+  // exceptions), not the full sheet - otherwise a status like
+  // "Delivered" shows up as a selectable filter option on the
+  // Exceptions page even though it can never actually match anything
+  // there (a delivered shipment is never flagged as an exception).
+  const carriersAvailable = [...new Set(baseList.map(s => s['Carrier'] || 'Unknown'))].sort();
+  const countriesAvailable = [...new Set(baseList.map(s => s['Country']).filter(Boolean))].sort();
+  const statusesAvailable = [...new Set(baseList.map(s => s['Status']).filter(Boolean))].sort();
+  const ownersAvailable = [...new Set(baseList.map(s => s['Owner']).filter(Boolean))].sort();
   const filtered = applyListFilters(baseList, filters);
   const sorted = sortList(filtered, filters.sortCol, filters.sortDir);
   const container = document.getElementById(containerId);
