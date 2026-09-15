@@ -68,6 +68,8 @@
   tbody tr { border-bottom: 1px solid var(--line); }
   .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
   .inline-editable-date { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 125px; }
+  .inline-editable-text { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 70px; }
+  .inline-editable-select { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 100px; }
   .exc-row-mild { background: #fdf6e8; }
   .exc-row-warn { background: #fbead8; }
   .exc-row-severe { background: #fbe2dc; }
@@ -96,11 +98,19 @@
      envelope icon, not Google's trademarked Gmail "M" glyph. */
   .icon-btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--surface); padding: 7px 14px 7px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
   .icon-btn:hover { border-color: var(--teal-500); background: var(--teal-100); }
+  .email-draft-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+  .email-draft-btn:hover { border-color: var(--teal-500); background: var(--teal-100); }
   .search-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px; margin-bottom: 16px; }
   .search-panel input { width: 100%; max-width: 420px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
   .upload-step2 { display: none; align-items: center; gap: 10px; }
   .upload-step2.visible { display: flex; }
   .file-chosen { font-size: 12.5px; color: var(--sub); }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: var(--surface); border-radius: 12px; padding: 22px 24px; width: 560px; max-width: 92vw; max-height: 85vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.25); }
+  .modal-box h3 { margin: 0 0 12px; font-size: 15px; }
+  .modal-box textarea { width: 100%; min-height: 220px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 13px; font-family: inherit; background: var(--paper); color: var(--ink); resize: vertical; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -111,8 +121,8 @@
     <div class="logo-sub">BIOSCIENCE</div>
     <nav>
       <div class="nav-item active" data-view="overview">Overview</div>
-      <div class="nav-item" data-view="shipments">Shipments</div>
       <div class="nav-item" data-view="exceptions">Exceptions</div>
+      <div class="nav-item" data-view="shipments">Shipments</div>
       <div class="nav-item" data-view="followups">Follow-Ups</div>
       <div class="nav-item" data-view="reports">Reports</div>
     </nav>
@@ -195,6 +205,17 @@
   </main>
 </div>
 
+<div class="modal-overlay" id="emailModalOverlay">
+  <div class="modal-box">
+    <h3 id="emailModalTitle">Draft Email</h3>
+    <textarea id="emailModalTextarea" readonly></textarea>
+    <div class="modal-actions">
+      <button class="btn" id="emailModalCloseBtn">Close</button>
+      <button class="btn" id="emailModalCopyBtn" style="background:var(--teal-700);color:white;border-color:var(--teal-700);">Copy</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const workerUrlInput = document.getElementById('workerUrlInput');
 const configToggle = document.getElementById('configToggle');
@@ -219,23 +240,6 @@ let uploadFrameReady = false; // ignore the iframe's initial blank-page load eve
 uploadFrame.addEventListener('load', () => {
   if (!uploadFrameReady) { uploadFrameReady = true; return; }
 
-  // Previously this handler never actually read the iframe's response -
-  // it just showed a generic "Processing complete" message regardless
-  // of what happened. It now parses the JSON the server embedded in
-  // the iframe's #result element where possible.
-  //
-  // IMPORTANT LIMITATION: the dashboard (GitHub Pages) and the Apps
-  // Script endpoint (script.google.com) are different origins, so the
-  // browser blocks reading the iframe's contentDocument once it has
-  // navigated there - this is a browser security restriction, not
-  // something fixable from this side. When that read fails, we fall
-  // back to a generic "done" message rather than a real result, since
-  // we genuinely can't see what happened. This was ALSO writing that
-  // fallback message to a fixed old element reference that isn't
-  // visible from the Reports page, which is the more concrete bug:
-  // the message was probably appearing somewhere off-screen the whole
-  // time. setActionStatus() now targets whichever status element is
-  // actually relevant to the action that was just triggered.
   function setActionStatus(text, cls) {
     const target = document.getElementById('emailStatus') || uploadStatus;
     target.textContent = text;
@@ -275,11 +279,6 @@ uploadFrame.addEventListener('load', () => {
     loadLastUpdated();
   }, 800);
 });
-
-// Per-shipment email drafts are attached inline wherever a tracking
-// number appears (Exceptions/Shipments/Follow-Ups tables, Priority
-// Packages) via attachEmailDraftActions(), called at the end of each
-// relevant render function.
 
 // Shared by both the "Choose CSV" click path and drag-and-drop -
 // whichever way a file arrives, it ends up here.
@@ -361,7 +360,7 @@ document.getElementById('submitCsvBtn').addEventListener('click', () => {
 
 /**
  * ============================================================
- * INLINE FIELD EDITING (First/Last Follow-Up Date)
+ * INLINE FIELD EDITING (First/Last Follow-Up Date, Initial)
  * ============================================================
  * Reuses the same hidden-iframe POST pattern as CSV upload and
  * email generation. Updates the local cache optimistically so the
@@ -421,6 +420,44 @@ document.addEventListener('change', (e) => {
   if (shipment) shipment[field] = value;
 
   submitFieldUpdate(trackingNumber, field, value);
+});
+
+// Owner/"Initial" inline text field - a separate listener since it
+// needs extra behavior: entering an initial for the first time also
+// auto-fills First Follow Up Date (if it isn't already set), per the
+// "whenever you put initial it fills first follow up date" request.
+document.addEventListener('change', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('inline-editable-owner')) return;
+  const trackingNumber = e.target.dataset.tracking;
+  const value = e.target.value;
+
+  const shipment = allShipmentsCache.find(s => s['Tracking Number'] === trackingNumber);
+  const hadNoOwnerBefore = shipment && !shipment['Owner'];
+  if (shipment) shipment['Owner'] = value;
+  submitFieldUpdate(trackingNumber, 'Owner', value);
+
+  if (hadNoOwnerBefore && value && shipment && !shipment['First Follow Up Date']) {
+    const todayStr = Utilities_formatDateISO(new Date());
+    shipment['First Follow Up Date'] = todayStr;
+    submitFieldUpdate(trackingNumber, 'First Follow Up Date', todayStr);
+    // Reflect the auto-filled date immediately in any visible date
+    // input for this row, without waiting for a full re-render.
+    document.querySelectorAll('input.inline-editable-date[data-tracking="' + trackingNumber + '"][data-field="First Follow Up Date"]').forEach(el => {
+      el.value = todayStr;
+    });
+  }
+});
+
+// Shipping Condition inline dropdown (manual override) - lets an
+// operator set Dry Ice / Ambient directly when auto-detection from
+// the carrier feed isn't available or needs correcting.
+document.addEventListener('change', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('inline-editable-condition')) return;
+  const trackingNumber = e.target.dataset.tracking;
+  const value = e.target.value;
+  const shipment = allShipmentsCache.find(s => s['Tracking Number'] === trackingNumber);
+  if (shipment) shipment['Shipping Condition'] = value;
+  submitFieldUpdate(trackingNumber, 'Shipping Condition', value);
 });
 
 async function loadLastUpdated() {
@@ -511,29 +548,8 @@ async function loadDashboard() {
 
 /**
  * ============================================================
- * AI SUMMARY PANEL (rule-based, no API calls / no cost)
- * ============================================================
- * Turns the same stats already computed for the KPI cards, Carrier
- * Comparison table, and Aging donut into a short plain-English
- * paragraph, instead of a live Claude API call. Fully deterministic
- * and free - the tradeoff is it reads a bit more templated than a
- * real generated summary would, since it's built from fixed
- * sentence patterns rather than genuinely composed text.
- * ============================================================
- */
-/**
- * ============================================================
  * PRIORITY PACKAGES (rule-based, free, always reliable)
  * ============================================================
- * Ranks currently-flagged shipments by computed urgency, so
- * operators get a specific, actionable list of which tracking
- * numbers to act on first - not just an aggregate count. This is
- * the reliable backbone; AI Insights (below) narrates this same
- * list in words, it never re-decides the ranking itself.
- *
- * Scoring is a starting point, not a confirmed rule - see the
- * Exceptions Discovery doc for the open questions this should
- * eventually be validated against with the operator.
  */
 function computePriorityPackages(shipments, limit) {
   const flagged = shipments.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
@@ -585,13 +601,10 @@ function renderPriorityPackages(shipments) {
         const tn = s['Tracking Number'] || '';
         const url = getCarrierTrackingUrl(s['Carrier'], tn);
         const linkedTn = url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
-        return `<div style="display:grid;grid-template-columns:420px 1fr 170px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;gap:16px;">
+        return `<div style="display:grid;grid-template-columns:420px 1fr 44px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;gap:16px;">
           <div>${carrierLogoBadge(s['Carrier'])}<strong>${linkedTn}</strong> <span style="color:var(--sub);">- ${s['Q-order'] || ''} - ${s['Destination'] || ''}</span></div>
           <div style="color:var(--red);text-align:center;">${item.reason}</div>
-          <select class="email-draft-select" data-tracking="${tn}" style="font-size:11px;padding:3px 4px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);justify-self:start;">
-            <option value="">Draft email...</option>
-            ${EMAIL_TEMPLATE_OPTIONS.map(t => `<option value="${t.key}">${t.label}</option>`).join('')}
-          </select>
+          ${emailDraftButton(tn)}
         </div>`;
       }).join('')}
     </div>
@@ -601,14 +614,6 @@ function renderPriorityPackages(shipments) {
 /**
  * ============================================================
  * AI INSIGHTS (Google Gemini, free tier - optional layer on top)
- * ============================================================
- * Sends the ALREADY-COMPUTED Priority Packages list and stats to
- * Gemini and asks it to narrate them in plain English - it is
- * explicitly instructed not to invent packages or change the
- * ranking, only explain what's already been decided. Manual
- * button trigger, not automatic, to keep API usage predictable.
- * Requires GEMINI_API_KEY in Apps Script Script Properties - see
- * roadmap for setup.
  * ============================================================
  */
 function buildAiInsightsPrompt(total, flagged, byCarrier, priorityList) {
@@ -658,15 +663,6 @@ function fetchAiInsights(promptText) {
  * ============================================================
  * NATURAL LANGUAGE QUERY BOX (Overview, above Summary)
  * ============================================================
- * AI (Gemini) is used ONLY to translate the question into
- * structured filter criteria (JSON) - it never computes the answer
- * itself. Those criteria are then applied with the same reliable,
- * deterministic JS filtering logic used everywhere else on the
- * dashboard. This avoids ever asking the model to count, list, or
- * summarize actual shipment data directly, which risks it
- * inventing plausible-looking but wrong results on real data it
- * can't fully see.
- * ============================================================
  */
 function fetchChatQueryCriteria(queryText) {
   return new Promise((resolve, reject) => {
@@ -692,9 +688,6 @@ function fetchChatQueryCriteria(queryText) {
   });
 }
 
-// Applies AI-extracted criteria using the same plain, deterministic
-// filtering approach as the rest of the dashboard - every condition
-// here is a simple, auditable JS comparison, not an AI judgment call.
 function applyChatCriteria(shipments, criteria) {
   let result = shipments;
   if (criteria.daysDelayedMin !== undefined) result = result.filter(s => (Number(s['Days Delayed']) || 0) >= criteria.daysDelayedMin);
@@ -767,10 +760,6 @@ function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
   );
 
   if (carriers.length > 1) {
-    // Compare carriers by absolute exception count and separately by
-    // rate, since the carrier with more total exceptions isn't
-    // always the one with the worse rate - worth calling out both
-    // rather than picking one framing that could mislead.
     const sorted = carriers.slice().sort((a, b) => byCarrier[b].exceptions - byCarrier[a].exceptions);
     const most = sorted[0];
     const rates = {};
@@ -815,14 +804,6 @@ function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
   return '<ul style="margin:0;padding-left:20px;">' + sentences.map(s => `<li style="margin-bottom:6px;">${s}</li>`).join('') + '</ul>';
 }
 
-/**
- * Brand-colored initials badge as a stand-in for a real carrier
- * logo image. Actual UPS/FedEx logo artwork is trademarked and
- * isn't something that can be reproduced here - if you have
- * licensed logo image files, swap the returned span for something
- * like <img src="/logos/ups.png" class="carrier-logo-badge"> per
- * carrier instead.
- */
 function carrierLogoBadge(carrier) {
   const colors = {
     'UPS': '#5b3a1a',
@@ -836,18 +817,8 @@ function carrierLogoBadge(carrier) {
   return `<span class="carrier-logo-badge" style="background:${bg};color:${fg};">${initials}</span>`;
 }
 
-// Holds the last full shipments list loaded, so stat-card clicks and
-// search can filter against it without re-fetching.
 let allShipmentsCache = [];
 
-
-/**
- * Injects a small camera icon into the top-right corner of every
- * .panel currently in the DOM (idempotent - skips panels that
- * already have one), wired to capture that panel as a PNG via
- * html2canvas. Called at the end of every render function that
- * creates panels, so it's safe/cheap to call repeatedly.
- */
 function attachSnapshotButtons() {
   document.querySelectorAll('.panel').forEach(panel => {
     if (panel.classList.contains('no-snapshot')) return;
@@ -874,7 +845,7 @@ function capturePanelSnapshot(panel) {
   const titleEl = panel.querySelector('h2');
   const name = titleEl ? titleEl.textContent.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'panel-snapshot';
   const btn = panel.querySelector('.panel-snapshot-btn');
-  if (btn) btn.style.visibility = 'hidden'; // don't capture the button itself in the image
+  if (btn) btn.style.visibility = 'hidden';
 
   const bg = getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#ffffff';
   html2canvas(panel, { backgroundColor: bg, scale: 2 }).then(canvas => {
@@ -933,19 +904,9 @@ function hideDetailPanel() {
   document.querySelectorAll('.stat-card.active').forEach(el => el.classList.remove('active'));
 }
 
-// Event delegation on the stats grid, since stat-card elements get
-// recreated on every render (their innerHTML is rebuilt from
-// scratch), so listeners attached directly to them would be lost.
 let overviewDetailPage = 0;
 let overviewDetailActiveKey = null;
 
-/**
- * Replaces the Overview widgets (Summary, Carrier Comparison, Aging
- * donut, Trend, Exceptions preview) with a filtered table in the same
- * spot, rather than appending a separate panel elsewhere on the page
- * - avoids the jarring "two different things visible, page jumps
- * around" experience of the old floating detail panel approach.
- */
 function showOverviewDetail(filterKey, title, list) {
   overviewDetailActiveKey = filterKey;
   overviewDetailPage = 0;
@@ -984,9 +945,6 @@ document.getElementById('content').addEventListener('click', (e) => {
   const card = e.target.closest('.stat-card');
   if (!card) return;
 
-  // The Follow-Ups card navigates to its own dedicated page (matching
-  // the mockup's "View list ->" link), rather than swapping in a
-  // detail table on the same page like the other stat cards do.
   if (card.id === 'followupsStatCard') {
     switchView('followups');
     return;
@@ -1004,8 +962,6 @@ document.getElementById('content').addEventListener('click', (e) => {
   }
   card.classList.add('active');
 
-  // Use the same time-filtered set the KPI cards themselves are
-  // showing counts for, so the detail table matches what's on the card.
   const filteredShipments = getOverviewFilteredShipments();
   const flagged = filteredShipments.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
   const delivered = filteredShipments.filter(s => s['Delivered Date']);
@@ -1037,15 +993,8 @@ searchInput.addEventListener('input', () => {
       return;
     }
 
-    // Multiple tracking numbers / Q-orders can be searched at once -
-    // split on commas, whitespace, or newlines, match ANY of them.
     const terms = rawQuery.split(/[,\s]+/).map(t => t.toLowerCase()).filter(Boolean);
 
-    // Search now respects whichever list view is currently active -
-    // e.g. searching while on the Shipments page with "Last 7 Days"
-    // selected only searches within that filtered set, not everything.
-    // On Overview it still searches the full dataset, since there's
-    // no active list-view filter to respect there.
     let basePool = allShipmentsCache;
     if (currentActiveView === 'shipments') {
       basePool = applyListFilters(allShipmentsCache, viewFilters.shipments);
@@ -1066,21 +1015,13 @@ searchInput.addEventListener('input', () => {
   }, 200);
 });
 
-// ---- Sidebar view switching (Overview / Shipments / Exceptions) ----
-// This is a single-page app that fetches everything once, so
-// "different pages" are implemented as client-side view swaps
-// rather than real page navigation - instant, no reload, and no
-// extra hosting/routing needed. Data already sitting in
-// allShipmentsCache is reused, not re-fetched.
+// ---- Sidebar view switching (Overview / Exceptions / Shipments / Follow-Ups / Reports) ----
 const PAGE_SIZE = 50;
 let shipmentsPage = 0;
 let exceptionsPage = 0;
 let followupsPage = 0;
 let snapshotsCache = [];
 
-// Per-view filter state (date range + carrier selection). Filters by
-// Ship Date since that's the most natural "when did this happen" field
-// for an operator browsing shipments. carriers: null means "all".
 let viewFilters = {
   shipments: { preset: 'today', from: '', to: '', carriers: null, regions: null, locality: null, countries: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
   exceptions: { preset: 'all', from: '', to: '', carriers: null, regions: null, locality: null, countries: null, status: '', owner: '', sortCol: null, sortDir: 'asc' },
@@ -1094,11 +1035,6 @@ function parseShipDate(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// Parses a <input type="date"> value ("YYYY-MM-DD") as a LOCAL date,
-// not UTC - new Date("YYYY-MM-DD") parses as UTC midnight in most
-// browsers, which can be off by a day compared to locally-parsed Ship
-// Dates elsewhere in this file. Splitting and constructing manually
-// avoids that mismatch.
 function parseISODateLocal(str) {
   if (!str) return null;
   const parts = str.split('-').map(Number);
@@ -1134,12 +1070,6 @@ function getDateRangeBounds(filters) {
   return { from: null, to: null }; // 'all'
 }
 
-// Overview's own time-frame selector - simpler than the Shipments/
-// Exceptions/Follow-Ups filter bar (just one click, no Apply step),
-// since it's a single quick selector rather than several fields
-// being configured together. "customDays" is a slider-driven "last
-// N days" option, separate from the Shipments/Exceptions/Follow-Ups
-// filter bar's "custom" (which uses explicit From/To date pickers).
 let overviewTimeFilter = 'today';
 let overviewCustomDays = 14;
 
@@ -1225,15 +1155,6 @@ function exportListToCsv(list, filenamePrefix) {
   URL.revokeObjectURL(url);
 }
 
-/**
- * Renders a filter bar (date range + carrier checkboxes) into
- * `containerId`, then renders the filtered, paginated table into a
- * sub-container beneath it. Shared by Shipments, Exceptions, and
- * Follow-Ups since they're all the same kind of filterable list.
- */
-// Full country names for the filter dropdown display - falls back
-// to showing just the code if one isn't in this list, so an
-// unrecognized code never breaks anything, just shows less detail.
 const COUNTRY_NAMES = {
   US: 'United States', CA: 'Canada', MX: 'Mexico',
   GB: 'United Kingdom', UK: 'United Kingdom', DE: 'Germany', FR: 'France', NL: 'Netherlands',
@@ -1253,7 +1174,12 @@ function formatCountryLabel(code) {
   return name ? name + ' (' + code + ')' : code;
 }
 
-function renderFilterableView(containerId, filterKey, baseList, page, title, onPageChange, onFilterChange, customTableRenderer) {
+/**
+ * `viewKey` (e.g. 'exceptions') lets this renderer apply per-view
+ * behavior - specifically, the Exceptions view hides the Date Range
+ * control entirely (item 5: irrelevant for an exceptions-only view).
+ */
+function renderFilterableView(containerId, filterKey, baseList, page, title, onPageChange, onFilterChange, customTableRenderer, viewKey) {
   const filters = viewFilters[filterKey];
   const carriersAvailable = [...new Set(allShipmentsCache.map(s => s['Carrier'] || 'Unknown'))].sort();
   const countriesAvailable = [...new Set(allShipmentsCache.map(s => s['Country']).filter(Boolean))].sort();
@@ -1263,9 +1189,12 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
   const sorted = sortList(filtered, filters.sortCol, filters.sortDir);
   const container = document.getElementById(containerId);
 
+  const hideDateRange = viewKey === 'exceptions';
+
   container.innerHTML = `
     <div class="panel" style="margin-bottom:14px;">
       <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;">
+        ${hideDateRange ? '' : `
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Date Range (by Ship Date)</label>
           <select id="${containerId}_preset" style="padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
@@ -1287,6 +1216,7 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
             <input type="date" id="${containerId}_to" value="${filters.to || ''}" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;">
           </div>
         </div>
+        `}
         <div>
           <label style="font-size:11px;color:var(--sub);display:block;margin-bottom:4px;">Carrier</label>
           <div style="display:flex;flex-direction:column;gap:6px;">
@@ -1362,20 +1292,14 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
     <div id="${containerId}_tableArea"></div>
   `;
 
-  // Controls below only STAGE changes onto the filters object - they
-  // don't touch the table. The table only updates when "Apply
-  // Filters" is clicked, so you can set up several filters together
-  // (date range + carrier + status, etc.) before anything changes.
-  // The one exception is the date-range preset dropdown, which needs
-  // to reveal/hide the custom From/To fields immediately for the
-  // controls themselves to make sense - that's a pure UI toggle and
-  // doesn't touch the table either.
-  document.getElementById(containerId + '_preset').addEventListener('change', (e) => {
-    filters.preset = e.target.value;
-    document.getElementById(containerId + '_customDates').style.display = filters.preset === 'custom' ? 'flex' : 'none';
-  });
-  document.getElementById(containerId + '_from').addEventListener('change', (e) => { filters.from = e.target.value; });
-  document.getElementById(containerId + '_to').addEventListener('change', (e) => { filters.to = e.target.value; });
+  if (!hideDateRange) {
+    document.getElementById(containerId + '_preset').addEventListener('change', (e) => {
+      filters.preset = e.target.value;
+      document.getElementById(containerId + '_customDates').style.display = filters.preset === 'custom' ? 'flex' : 'none';
+    });
+    document.getElementById(containerId + '_from').addEventListener('change', (e) => { filters.from = e.target.value; });
+    document.getElementById(containerId + '_to').addEventListener('change', (e) => { filters.to = e.target.value; });
+  }
   document.querySelectorAll('.' + containerId + '_carrierCb').forEach(cb => {
     cb.addEventListener('change', () => {
       const checked = Array.from(document.querySelectorAll('.' + containerId + '_carrierCb:checked')).map(el => el.value);
@@ -1426,11 +1350,6 @@ function renderFilterableView(containerId, filterKey, baseList, page, title, onP
   });
   document.getElementById(containerId + '_applyBtn').addEventListener('click', onFilterChange);
 
-  // Computed fresh at click time from the live `filters` object, not
-  // from the `sorted` list captured when this panel last rendered -
-  // so Download CSV reflects whatever's currently selected in the
-  // controls, even if "Apply Filters" hasn't been clicked yet. This
-  // is intentionally independent from the Apply gate on the table.
   document.getElementById(containerId + '_exportBtn').addEventListener('click', () => {
     const currentFiltered = applyListFilters(baseList, filters);
     const currentSorted = sortList(currentFiltered, filters.sortCol, filters.sortDir);
@@ -1491,27 +1410,15 @@ function renderShipmentsView() {
   renderFilterableView('shipmentsView', 'shipments', allShipmentsCache, shipmentsPage, 'All Shipments',
     (p) => { shipmentsPage = p; renderShipmentsView(); },
     () => { shipmentsPage = 0; renderShipmentsView(); },
-    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Shipments', sortState, onSortClick));
+    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Shipments', sortState, onSortClick),
+    'shipments');
 }
 
 /**
  * ============================================================
  * EXCEPTIONS VIEW - CUSTOM RENDERING
  * ============================================================
- * The Exceptions page gets its own table layout instead of the
- * generic one used by Shipments/Follow-Ups, modeled after the
- * operator's own working sheet: separate sections per carrier,
- * draggable/reorderable columns, tracking numbers linked directly
- * to the carrier's official tracking page, and row-level color
- * coding by delay severity.
- * ============================================================
  */
-
-// Links straight to each carrier's own tracking page (opens in a new
-// tab) rather than trying to embed live tracking data inline - this
-// avoids extra API calls and duplicated data, and gives operators
-// the full carrier-side view (POD photos, signature, full scan
-// history) that we're not trying to replicate here.
 function getCarrierTrackingUrl(carrier, trackingNumber) {
   if (!trackingNumber) return null;
   if (carrier === 'UPS') return 'https://www.ups.com/track?loc=en_US&tracknum=' + encodeURIComponent(trackingNumber);
@@ -1520,10 +1427,6 @@ function getCarrierTrackingUrl(carrier, trackingNumber) {
   return null;
 }
 
-// Days since Ship Date - if delivered, counts through Delivered Date
-// instead of today. Matches the "Days Shipped" column on the
-// operator's working sheet (total transit time), which is a
-// different metric than "Days Delayed" (days past the expected date).
 function computeDaysShipped(s) {
   const shipRaw = s['Ship Date'];
   if (!shipRaw) return '';
@@ -1547,24 +1450,22 @@ const EXCEPTIONS_DEFAULT_COLUMNS = [
   { key: 'qOrder', label: 'Q-order', field: 'Q-order' },
   { key: 'tracking', label: 'Tracking Number', type: 'trackingLink' },
   { key: 'origin', label: 'Origin', field: 'Origin' },
-  { key: 'condition', label: 'Shipping Condition', type: 'conditionBadge' },
+  { key: 'condition', label: 'Shipping Condition', type: 'conditionSelect' },
   { key: 'region', label: 'Region', field: 'Region' },
   { key: 'destination', label: 'Destination', field: 'Destination' },
   { key: 'shipDate', label: 'Ship Date', field: 'Ship Date' },
   { key: 'expectedDelivery', label: 'Expected Delivery', field: 'Expected Delivery' },
+  { key: 'actualDelivery', label: 'Actual Delivery', field: 'Delivered Date' },
   { key: 'daysShipped', label: 'Days Shipped', type: 'daysShipped' },
   { key: 'status', label: 'Status', field: 'Status' },
   { key: 'issueType', label: 'Issue Type', field: 'Issue Type' },
-  { key: 'nextAction', label: 'Next Action', field: 'Next Action' },
-  { key: 'owner', label: 'Owner', field: 'Owner' },
+  { key: 'nextAction', label: 'Action/Notes', field: 'Next Action' },
+  { key: 'owner', label: 'Initial', type: 'editableOwner' },
   { key: 'firstFollowup', label: 'First Follow Up Date', field: 'First Follow Up Date', type: 'editableDate' },
   { key: 'lastFollowup', label: 'Last Follow Up Date', field: 'Last Follow Up Date', type: 'editableDate' },
   { key: 'emailAction', label: 'Draft Email', type: 'emailAction' },
 ];
 
-// Column order persists per-browser via localStorage - dragging a
-// column reorders it for every carrier's table at once, and the
-// order survives a page reload.
 function getExceptionsColumnOrder() {
   try {
     const saved = JSON.parse(localStorage.getItem('exceptionsColumnOrder') || 'null');
@@ -1580,15 +1481,133 @@ function saveExceptionsColumnOrder(columns) {
   localStorage.setItem('exceptionsColumnOrder', JSON.stringify(columns.map(c => c.key)));
 }
 
-const EMAIL_TEMPLATE_OPTIONS = [
-  { key: 'generalDelay', label: 'General Delay Follow-up' },
-  { key: 'dryIceReIce', label: 'Dry Ice Re-Ice Request' },
-  { key: 'claimInitiation', label: 'Claim Initiation (Lost/Damaged)' },
-  { key: 'missedDelivery', label: 'Missed Delivery Attempt' },
-  { key: 'clearanceDocs', label: 'Clearance/Customs Documentation' },
-  { key: 'customerDisputesReceipt', label: 'Customer Disputes Non-Receipt' },
-  { key: 'addressCorrection', label: 'Address Correction Needed' },
-];
+/**
+ * ============================================================
+ * CLIENT-SIDE EMAIL TEMPLATES
+ * ============================================================
+ * Mirrors the templates in WebApp.gs so a draft can be composed and
+ * shown instantly in a copyable modal, without a round trip to the
+ * server. The template is chosen automatically from the shipment's
+ * own data (Shipping Condition / Issue Type) rather than requiring
+ * the operator to pick one manually.
+ * ============================================================
+ */
+function shipmentDetailBlockText(s) {
+  return 'Tracking Number: ' + (s['Tracking Number'] || '') + '\n' +
+    'Q-order: ' + (s['Q-order'] || '') + '\n' +
+    'Carrier: ' + (s['Carrier'] || '') + '\n' +
+    'Destination: ' + (s['Destination'] || '') + '\n' +
+    'Status: ' + (s['Status'] || '') + '\n' +
+    'Days Delayed: ' + (s['Days Delayed'] || 0) + '\n' +
+    (s['Shipping Condition'] === 'DRY ICE' ? 'Shipping Condition: DRY ICE\n' : '') +
+    '\n';
+}
+
+const EMAIL_TEMPLATES_CLIENT = {
+  generalDelay: {
+    label: 'General Delay Follow-up',
+    subject: (s) => 'Status Update Request - ' + s['Tracking Number'],
+    body: (s) => 'Could you please provide a status update on the following shipment?\n\n' +
+      shipmentDetailBlockText(s) + 'Thanks,\nTwist Bioscience Shipping Support',
+  },
+  dryIceReIce: {
+    label: 'Dry Ice Re-Ice Request',
+    subject: (s) => 'URGENT - Dry Ice Re-Ice Request - ' + s['Tracking Number'],
+    body: (s) => 'This shipment contains dry ice and is currently delayed. Please arrange for the package ' +
+      'to be re-iced as soon as possible to preserve the contents, and confirm once this has been done.\n\n' +
+      shipmentDetailBlockText(s) + 'This is time-sensitive - thank you for your prompt attention.\n\nTwist Bioscience Shipping Support',
+  },
+  claimInitiation: {
+    label: 'Claim Initiation (Lost/Damaged)',
+    subject: (s) => 'Claim Initiation - ' + s['Tracking Number'],
+    body: (s) => 'We would like to initiate a claim for the following shipment, which we believe to be lost or damaged. ' +
+      'Please advise on next steps and any documentation required on our end.\n\n' +
+      shipmentDetailBlockText(s) + 'Thank you,\nTwist Bioscience Shipping Support',
+  },
+  missedDelivery: {
+    label: 'Missed Delivery Attempt Follow-up',
+    subject: (s) => 'Missed Delivery Attempt - ' + s['Tracking Number'],
+    body: (s) => 'Our records show a missed delivery attempt on the following shipment. Could you confirm the ' +
+      'reason for the missed attempt and help schedule redelivery?\n\n' +
+      shipmentDetailBlockText(s) + 'Thank you,\nTwist Bioscience Shipping Support',
+  },
+  clearanceDocs: {
+    label: 'Clearance/Customs Documentation Request',
+    subject: (s) => 'Customs Clearance - Documentation Needed - ' + s['Tracking Number'],
+    body: (s) => 'This shipment appears to be held up in customs clearance. Could you let us know specifically ' +
+      'what documentation, if any, is required from us to release it?\n\n' +
+      shipmentDetailBlockText(s) + 'Thank you,\nTwist Bioscience Shipping Support',
+  },
+  addressCorrection: {
+    label: 'Address Correction Needed',
+    subject: (s) => 'Address Correction Needed - ' + s['Tracking Number'],
+    body: (s) => 'We believe the delivery address on this shipment may be incorrect or incomplete. Could you ' +
+      'confirm the address currently on file, and let us know if a correction can still be made in transit?\n\n' +
+      shipmentDetailBlockText(s) + 'Thank you,\nTwist Bioscience Shipping Support',
+  },
+};
+
+/**
+ * Picks the best-fit template for a shipment automatically, based on
+ * its Shipping Condition and Issue Type/Exception Type text. Falls
+ * back to the general delay template when nothing more specific
+ * matches - this is a best-effort heuristic, not a guarantee, so the
+ * modal always shows the composed text before anything is sent.
+ */
+function pickEmailTemplateKey(s) {
+  const issueText = ((s['Issue Type'] || '') + ' ' + (s['Exception Type'] || '')).toLowerCase();
+  if (s['Shipping Condition'] === 'DRY ICE') return 'dryIceReIce';
+  if (issueText.indexOf('address') !== -1) return 'addressCorrection';
+  if (issueText.indexOf('clearance') !== -1) return 'clearanceDocs';
+  if (issueText.indexOf('lost') !== -1 || issueText.indexOf('damage') !== -1) return 'claimInitiation';
+  if (issueText.indexOf('missed delivery') !== -1 || issueText.indexOf('delivery attempt') !== -1) return 'missedDelivery';
+  return 'generalDelay';
+}
+
+function emailDraftButton(trackingNumber) {
+  return `<button class="email-draft-btn" data-tracking="${trackingNumber}" title="Draft email">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M3.5 6.5l8.5 6.5 8.5-6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>`;
+}
+
+function openEmailModal(trackingNumber) {
+  const s = allShipmentsCache.find(sh => sh['Tracking Number'] === trackingNumber);
+  if (!s) return;
+  const templateKey = pickEmailTemplateKey(s);
+  const template = EMAIL_TEMPLATES_CLIENT[templateKey];
+  const subject = template.subject(s);
+  const body = template.body(s);
+
+  document.getElementById('emailModalTitle').textContent = template.label + ' - ' + trackingNumber;
+  document.getElementById('emailModalTextarea').value = 'Subject: ' + subject + '\n\n' + body;
+  document.getElementById('emailModalOverlay').classList.add('open');
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.email-draft-btn');
+  if (btn) openEmailModal(btn.dataset.tracking);
+});
+document.getElementById('emailModalCloseBtn').addEventListener('click', () => {
+  document.getElementById('emailModalOverlay').classList.remove('open');
+});
+document.getElementById('emailModalOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'emailModalOverlay') document.getElementById('emailModalOverlay').classList.remove('open');
+});
+document.getElementById('emailModalCopyBtn').addEventListener('click', () => {
+  const textarea = document.getElementById('emailModalTextarea');
+  textarea.select();
+  navigator.clipboard.writeText(textarea.value).then(() => {
+    const copyBtn = document.getElementById('emailModalCopyBtn');
+    const original = copyBtn.textContent;
+    copyBtn.textContent = 'Copied!';
+    setTimeout(() => { copyBtn.textContent = original; }, 1200);
+  }).catch(() => {
+    document.execCommand('copy');
+  });
+});
 
 function renderExceptionCell(col, s) {
   if (col.type === 'trackingLink') {
@@ -1596,87 +1615,28 @@ function renderExceptionCell(col, s) {
     const url = getCarrierTrackingUrl(s['Carrier'], tn);
     return url ? `<a class="tracking-link" href="${url}" target="_blank" rel="noopener">${tn}</a>` : tn;
   }
-  if (col.type === 'conditionBadge') return shippingConditionBadge(s['Shipping Condition']);
+  if (col.type === 'conditionSelect') {
+    const tn = s['Tracking Number'] || '';
+    const current = s['Shipping Condition'] || '';
+    const options = ['', 'DRY ICE', 'AMBIENT'];
+    return `<select class="inline-editable-select inline-editable-condition" data-tracking="${tn}">
+      ${options.map(o => `<option value="${o}" ${current === o ? 'selected' : ''}>${o === '' ? 'Unknown' : o}</option>`).join('')}
+    </select>`;
+  }
   if (col.type === 'daysShipped') return computeDaysShipped(s);
   if (col.type === 'editableDate') {
     const tn = s['Tracking Number'] || '';
     return `<input type="date" class="inline-editable-date" data-tracking="${tn}" data-field="${col.field}" value="${s[col.field] || ''}">`;
   }
+  if (col.type === 'editableOwner') {
+    const tn = s['Tracking Number'] || '';
+    return `<input type="text" maxlength="4" class="inline-editable-text inline-editable-owner" data-tracking="${tn}" value="${s['Owner'] || ''}" placeholder="\u2014">`;
+  }
   if (col.type === 'emailAction') {
     const tn = s['Tracking Number'] || '';
-    return `<select class="email-draft-select" data-tracking="${tn}" style="font-size:11.5px;padding:3px 4px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);">
-      <option value="">Draft email...</option>
-      ${EMAIL_TEMPLATE_OPTIONS.map(t => `<option value="${t.key}">${t.label}</option>`).join('')}
-    </select>`;
+    return emailDraftButton(tn);
   }
   return s[col.field] || '';
-}
-
-/**
- * Submits a per-shipment email draft request via the hidden iframe
- * form (same pattern as the CSV upload / field update actions) -
- * we don't need to read the generated content back, just know it
- * succeeded, so the simpler POST+iframe pattern is fine here.
- */
-function submitEmailDraft(trackingNumber, templateKey, selectEl) {
-  const workerUrl = workerUrlInput.value.trim();
-  if (!workerUrl) {
-    alert('Set your Web App URL first (see Web App settings below).');
-    return;
-  }
-  document.getElementById('emailDraftTrackingField').value = trackingNumber;
-  document.getElementById('emailDraftTemplateField').value = templateKey;
-  const form = document.getElementById('emailDraftForm');
-  form.action = workerUrl;
-  form.submit();
-
-  if (selectEl) {
-    const original = selectEl.style.borderColor;
-    selectEl.style.borderColor = 'var(--teal-700)';
-    setTimeout(() => { selectEl.value = ''; selectEl.style.borderColor = original; }, 1200);
-  }
-}
-
-// Event delegation - handles email-draft dropdowns anywhere they
-// appear (Exceptions/Shipments/Follow-Ups tables, Priority Packages),
-// without needing to attach a listener to each one individually.
-document.addEventListener('change', (e) => {
-  if (e.target.classList.contains('email-draft-select')) {
-    const templateKey = e.target.value;
-    if (!templateKey) return;
-    submitEmailDraft(e.target.dataset.tracking, templateKey, e.target);
-  }
-});
-
-/**
- * Renders one table per carrier (UPS, FedEx, DHL) instead of a
- * single combined table, with draggable/reorderable column headers
- * shared across all three. No pagination - exception lists are
- * small enough (tens, not thousands of rows) that showing everything
- * at once is more useful for operators than clicking through pages.
- */
-/**
- * Renders one table per carrier (UPS, FedEx, DHL) instead of a
- * single combined table, with draggable/reorderable column headers
- * shared across all three - and shared across every page that uses
- * this (Shipments, Exceptions, Follow-Ups all use the same column
- * order state, so reordering once applies everywhere). No
- * pagination - even the full Shipments list is small enough that
- * showing everything per-carrier beats clicking through pages.
- *
- * `listLabel` customizes each section's heading, e.g. "Exceptions",
- * "Shipments", "Follow-Ups Needed".
- */
-// Most columns sort by their own field directly. A few use a
-// 'type' instead of a raw field (tracking link, condition badge) -
-// these map to the underlying data field they actually display.
-// Days Shipped is computed on the fly, not a stored field, so it's
-// left out of sorting rather than sorting on nothing meaningful.
-function getColumnSortKey(col) {
-  if (col.field) return col.field;
-  if (col.key === 'tracking') return 'Tracking Number';
-  if (col.key === 'condition') return 'Shipping Condition';
-  return null;
 }
 
 function renderCarrierSplitTables(containerId, list, listLabel, sortState, onSortClick) {
@@ -1712,11 +1672,6 @@ function renderCarrierSplitTables(containerId, list, listLabel, sortState, onSor
 
   container.innerHTML = html;
 
-  // Drag-and-drop column reordering - applies to every carrier table
-  // at once since they all share the same column order. Click-to-sort
-  // coexists on the same header: a plain click (no drag) fires a
-  // normal 'click' event even on a draggable element, so both
-  // gestures work without conflicting.
   let dragSrcIndex = null;
   container.querySelectorAll('th[draggable="true"]').forEach(th => {
     th.addEventListener('click', () => {
@@ -1747,22 +1702,22 @@ function renderCarrierSplitTables(containerId, list, listLabel, sortState, onSor
   attachSnapshotButtons();
 }
 
+function getColumnSortKey(col) {
+  if (col.field) return col.field;
+  if (col.key === 'tracking') return 'Tracking Number';
+  if (col.key === 'condition') return 'Shipping Condition';
+  return null;
+}
+
 function renderExceptionsView() {
   const flagged = allShipmentsCache.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
   renderFilterableView('exceptionsView', 'exceptions', flagged, exceptionsPage, 'All Exceptions',
     (p) => { exceptionsPage = p; renderExceptionsView(); },
     () => { exceptionsPage = 0; renderExceptionsView(); },
-    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Exceptions', sortState, onSortClick));
+    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Delayed Shipments', sortState, onSortClick),
+    'exceptions');
 }
 
-/**
- * Follow-Ups Needed = flagged shipments where Next Action is still
- * blank - i.e. nobody has decided what to do about it yet. This
- * wasn't explicitly specified anywhere, so it's a reasonable default
- * definition rather than a confirmed spec - adjust the filter below
- * if a different definition is wanted (e.g. Owner blank instead, or
- * only shipments flagged today).
- */
 function getFollowupsNeeded() {
   return allShipmentsCache.filter(s =>
     (s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE') && !s['Next Action']
@@ -1773,14 +1728,10 @@ function renderFollowupsView() {
   renderFilterableView('followupsView', 'followups', getFollowupsNeeded(), followupsPage, 'Follow-Ups Needed',
     (p) => { followupsPage = p; renderFollowupsView(); },
     () => { followupsPage = 0; renderFollowupsView(); },
-    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Follow-Ups', sortState, onSortClick));
+    (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Follow-Ups', sortState, onSortClick),
+    'followups');
 }
 
-/**
- * Reports view: the Daily Snapshots history as a browsable table,
- * plus a client-side CSV export (no server round-trip needed - built
- * from data already loaded).
- */
 function getDeliveriesByDay() {
   const map = {};
   allShipmentsCache.forEach(s => {
@@ -1805,7 +1756,6 @@ function renderReportsView() {
   const snapshotSection = snapshotsCache.length === 0
     ? '<div class="empty-state">No snapshot history yet.</div>'
     : (() => {
-        const sorted = snapshotsCache.slice().sort((a, b) => (b['Date'] || '').localeCompare(a['Date'] || ''));
         return `
           <table>
             <thead><tr><th>Date</th><th>Carrier</th><th>Total Shipments</th><th>Delivered</th><th>Exceptions</th><th>On-Time Rate</th></tr></thead>
@@ -1848,7 +1798,6 @@ function renderReportsView() {
     </div>
   `;
 
-  // ---- Deliveries by Day table body ----
   const dbdBody = document.getElementById('deliveriesByDayTableBody');
   deliveriesByDay.forEach(row => {
     const total = Object.values(row.carriers).reduce((a, b) => a + b, 0);
@@ -1902,9 +1851,6 @@ function renderReportsView() {
   attachSnapshotButtons();
 }
 
-// Small local helper since Google's Utilities.formatDate isn't
-// available in browser JS - just need a simple YYYY-MM-DD stamp for
-// the downloaded filename.
 function Utilities_formatDateISO(d) {
   return d.toISOString().slice(0, 10);
 }
@@ -1980,12 +1926,6 @@ function renderDashboard(shipments, snapshots) {
   allShipmentsCache = shipments;
   snapshotsCache = snapshots;
 
-  // ---- Dynamic subtitle: lists whichever carriers are actually in
-  // the data, instead of a hardcoded "(FedEx)" that goes stale the
-  // moment a second carrier is added. Always based on the FULL
-  // dataset, not the current time-frame selection, since "which
-  // carriers do we ship with" shouldn't disappear just because
-  // nothing shipped today. ----
   const carriersPresent = [...new Set(shipments.map(s => s['Carrier'] || 'Unknown'))].sort();
   document.getElementById('subtitleText').textContent =
     'Live data from your Shipment Dashboard Data sheet (' + carriersPresent.join(' + ') + ')';
@@ -2002,20 +1942,6 @@ const TIME_FRAME_PILLS = [
   { key: 'customDays', label: 'Custom' },
 ];
 
-/**
- * Renders (and re-renders on time-frame pill clicks) everything on
- * the Overview page EXCEPT the subtitle - stat cards, Summary,
- * Carrier Comparison, Aging donut, and the Exceptions preview table
- * all recompute from whatever time frame is currently selected.
- * Applies instantly on click since it's one quick selector, not
- * several fields to configure together like the dedicated list
- * views' filter bars.
- *
- * The Trend chart is intentionally NOT re-filtered by this - it
- * already visualizes change over time on its own x-axis, so slicing
- * it down to "Last 7 Days" would mostly just remove context rather
- * than add clarity.
- */
 function renderOverviewContent() {
   const content = document.getElementById('content');
   const shipments = getOverviewFilteredShipments();
@@ -2113,12 +2039,6 @@ function renderOverviewContent() {
 
   const customDaysSlider = document.getElementById('customDaysSlider');
   if (customDaysSlider) {
-    // 'input' fires continuously while dragging - just update the
-    // label text (cheap, doesn't touch the slider's own DOM node).
-    // Re-rendering the whole page on every tick would destroy and
-    // recreate the slider mid-drag, breaking the drag gesture in
-    // most browsers. The actual data recompute only happens on
-    // 'change', which fires once when the drag is released.
     customDaysSlider.addEventListener('input', (e) => {
       document.getElementById('customDaysLabel').textContent = e.target.value;
     });
@@ -2128,7 +2048,6 @@ function renderOverviewContent() {
     });
   }
 
-  // ---- Carrier comparison ----
   const byCarrier = {};
   shipments.forEach(s => {
     const c = s['Carrier'] || 'Unknown';
@@ -2145,22 +2064,12 @@ function renderOverviewContent() {
     carrierBody.appendChild(tr);
   });
 
-  // DHL support isn't built yet (still needs a sample CSV export to
-  // build a parser against) - show it in the comparison table anyway
-  // so it's visible as a planned carrier, not silently absent.
   if (!byCarrier['DHL']) {
     const dhlRow = document.createElement('tr');
     dhlRow.innerHTML = `<td><div class="carrier-name-cell">${carrierLogoBadge('DHL')}DHL</div></td><td colspan="3" style="color:var(--sub);font-style:italic;">Work in progress - not yet integrated</td>`;
     carrierBody.appendChild(dhlRow);
   }
 
-  // ---- Aging buckets (computed once here, used by both the Summary
-  // text below and the donut chart later) ----
-  // Every bucket is derived from the SAME `flagged` set used for
-  // "On Time", so onTime + 1-2 + 3-5 + 6+ always sums to exactly
-  // `total`, and every flagged shipment - date-based or exception-
-  // based - is accounted for somewhere, instead of some vanishing
-  // when their accrued Days Delayed happens to be 0.
   const onTime = total - flagged.length;
   const flaggedDays = flagged.map(s => Number(s['Days Delayed']) || 0);
   const d1to2 = flaggedDays.filter(d => d <= 2).length;
@@ -2217,7 +2126,6 @@ function renderOverviewContent() {
   chatQueryBtn.onclick = runChatQuery;
   chatQueryInput.onkeydown = (e) => { if (e.key === 'Enter') runChatQuery(); };
 
-  // ---- Exceptions table ----
   const excBody = document.getElementById('exceptionsTableBody');
   flagged.slice(0, 50).forEach(s => {
     const tr = document.createElement('tr');
@@ -2225,7 +2133,6 @@ function renderOverviewContent() {
     excBody.appendChild(tr);
   });
 
-  // ---- Aging donut ----
   new Chart(document.getElementById('agingChart'), {
     type: 'doughnut',
     data: {
@@ -2235,11 +2142,6 @@ function renderOverviewContent() {
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10.5 } } } } },
   });
 
-  // ---- Trend chart from Daily Snapshots ----
-  // FIX: rows with a missing/blank Date no longer get lumped into a
-  // misleading 'Unknown' bucket - they're skipped instead, and if
-  // there's no usable snapshot history yet at all, we show a plain
-  // empty-state message rather than a flat, confusing chart.
   const byDate = {};
   snapshots.forEach(s => {
     const key = (s['Date'] || '').toString().trim();
@@ -2272,12 +2174,6 @@ function renderOverviewContent() {
         maintainAspectRatio: false,
         plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } },
         scales: {
-          // Total Shipments is typically ~100x larger than
-          // Exceptions - sharing one axis crushed the Exceptions
-          // line down to an invisible flat line near zero, even
-          // when the underlying numbers were completely correct.
-          // Giving Exceptions its own right-side axis makes it
-          // readable on its own terms.
           y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Total Shipments' } },
           yExceptions: { beginAtZero: true, position: 'right', title: { display: true, text: 'Exceptions' }, grid: { drawOnChartArea: false } },
         },
@@ -2287,10 +2183,7 @@ function renderOverviewContent() {
   attachSnapshotButtons();
 }
 
-// ---- Light/Dark mode ----
 function applyChartTheme() {
-  // Chart.js defaults to black legend/axis text, which is unreadable
-  // on a dark background - keep it in sync with the current theme.
   Chart.defaults.color = document.body.classList.contains('dark') ? '#c9d3d0' : '#1c2624';
 }
 
@@ -2299,9 +2192,6 @@ function setTheme(isDark) {
   document.getElementById('themeToggleKnob').innerHTML = isDark ? '&#9789;' : '&#9728;';
   localStorage.setItem('dashboardTheme', isDark ? 'dark' : 'light');
   applyChartTheme();
-  // Only Overview has Chart.js charts (donut + trend) - re-render them
-  // so colors/border pick up the new theme immediately, rather than
-  // waiting for the next unrelated re-render to happen to fix it.
   if (currentActiveView === 'overview' && allShipmentsCache.length > 0) {
     renderOverviewContent();
   }
