@@ -43,7 +43,7 @@
   .upload-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; transition: border-color 0.15s, background 0.15s; }
   .upload-panel.drag-over { border-color: var(--teal-500); border-style: dashed; background: var(--teal-100); }
   .upload-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .last-updated { font-size: 12.5px; color: var(--sub); }
+  .last-updated { font-size: 12.5px; color: var(--sub); text-align: right; }
   .last-updated b { color: var(--ink); }
   .upload-status { font-size: 12.5px; }
   .upload-status.ok { color: var(--green); }
@@ -539,14 +539,21 @@ async function loadLastUpdated() {
       fetchSheetTab(workerUrl, 'Upload Log'),
     ]);
 
+    // Every row from both logs becomes a candidate (not just the
+    // last row of each) - since FedEx and UPS runs are now
+    // interleaved in the same logs, tagged by Carrier, we need to
+    // search across history for the most recent match per carrier,
+    // not just assume the very last row overall covers both.
     const candidates = [];
-    if (syncLog.status === 'fulfilled' && syncLog.value.length > 0) {
-      const last = syncLog.value[syncLog.value.length - 1];
-      candidates.push({ time: last['Run Time'], source: 'Drive/Trigger Sync' });
+    if (syncLog.status === 'fulfilled') {
+      syncLog.value.forEach(row => {
+        candidates.push({ time: row['Run Time'], source: 'Drive/Trigger Sync', carrier: (row['Carrier'] || '').toString() });
+      });
     }
-    if (uploadLog.status === 'fulfilled' && uploadLog.value.length > 0) {
-      const last = uploadLog.value[uploadLog.value.length - 1];
-      candidates.push({ time: last['Timestamp'], source: last['Source'] || 'Browser Upload' });
+    if (uploadLog.status === 'fulfilled') {
+      uploadLog.value.forEach(row => {
+        candidates.push({ time: row['Timestamp'], source: row['Source'] || 'Browser Upload', carrier: (row['Carrier'] || '').toString() });
+      });
     }
 
     if (candidates.length === 0) {
@@ -555,8 +562,27 @@ async function loadLastUpdated() {
     }
 
     candidates.sort((a, b) => new Date(b.time) - new Date(a.time));
-    const mostRecent = candidates[0];
-    lastUpdatedEl.innerHTML = 'Data last updated: <b>' + formatLastUpdatedTimestamp(mostRecent.time) + '</b> (' + mostRecent.source + ')';
+
+    const mostRecentFor = (carrierName) => candidates.find(c => c.carrier.indexOf(carrierName) !== -1);
+    const fedexEntry = mostRecentFor('FedEx');
+    const upsEntry = mostRecentFor('UPS');
+    // Log rows written before this Carrier-tagging change went live
+    // have no Carrier value at all - fall back to the old combined
+    // single-line behavior using those until fresh tagged runs exist.
+    const untaggedEntry = candidates.find(c => !c.carrier);
+
+    const lines = [];
+    if (fedexEntry) {
+      lines.push('FedEx last updated: <b>' + formatLastUpdatedTimestamp(fedexEntry.time) + '</b> (' + fedexEntry.source + ')');
+    }
+    if (upsEntry) {
+      lines.push('UPS last updated: <b>' + formatLastUpdatedTimestamp(upsEntry.time) + '</b> (' + upsEntry.source + ')');
+    }
+    if (lines.length === 0 && untaggedEntry) {
+      lines.push('Data last updated: <b>' + formatLastUpdatedTimestamp(untaggedEntry.time) + '</b> (' + untaggedEntry.source + ')');
+    }
+
+    lastUpdatedEl.innerHTML = lines.map(l => '<div>' + l + '</div>').join('');
   } catch (err) {
     lastUpdatedEl.textContent = '';
   }
@@ -1139,6 +1165,7 @@ function getDateRangeBounds(filters) {
 }
 
 let overviewTimeFilter = 'today';
+let trendChartType = localStorage.getItem('trendChartType') || 'line';
 let overviewCustomDays = 14;
 
 function getOverviewFilteredShipments() {
@@ -2125,7 +2152,14 @@ function renderOverviewContent() {
       </div>
 
       <div class="panel">
-        <h2>Trend (Total Shipments &amp; Delays)</h2>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+          <h2 style="margin:0;">Trend (Total Shipments &amp; Delays)</h2>
+          <select id="trendChartTypeSelect" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--surface);color:var(--ink);">
+            <option value="line">Line</option>
+            <option value="bar">Bar</option>
+            <option value="pie">Pie</option>
+          </select>
+        </div>
         <div class="chart-wrap" id="trendChartWrap"><canvas id="trendChart"></canvas></div>
       </div>
 
@@ -2252,8 +2286,22 @@ function renderOverviewContent() {
     byDate[key].total += Number(s['Total Shipments']) || 0;
     byDate[key].exceptions += Number(s['Exceptions']) || 0;
   });
-  const dates = Object.keys(byDate).sort();
+  // FIX: sort by actual date value, not as plain strings - a string
+  // sort put "9/10/2026" before "9/2/2026" (comparing character by
+  // character, '1' < '2'), scrambling the x-axis out of chronological
+  // order as soon as any day-of-month reached two digits.
+  const dates = Object.keys(byDate).sort((a, b) => new Date(a) - new Date(b));
   const trendWrap = document.getElementById('trendChartWrap');
+
+  const trendTypeSelect = document.getElementById('trendChartTypeSelect');
+  if (trendTypeSelect) {
+    trendTypeSelect.value = trendChartType;
+    trendTypeSelect.addEventListener('change', (e) => {
+      trendChartType = e.target.value;
+      localStorage.setItem('trendChartType', trendChartType);
+      renderOverviewContent();
+    });
+  }
 
   if (dates.length === 0) {
     trendWrap.outerHTML = '<div class="empty-state" id="trendChartWrap">No snapshot history yet - this builds up automatically as syncDashboardData runs on future days.</div>';
@@ -2262,25 +2310,56 @@ function renderOverviewContent() {
       trendWrap.insertAdjacentHTML('beforebegin',
         '<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">Only 1 day of history so far - this chart becomes more useful as daily snapshots accumulate.</div>');
     }
-    new Chart(document.getElementById('trendChart'), {
-      type: 'line',
-      data: {
-        labels: dates,
-        datasets: [
-          { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
-          { label: 'Delays', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'yExceptions' },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } },
-        scales: {
-          y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Total Shipments' } },
-          yExceptions: { beginAtZero: true, position: 'right', title: { display: true, text: 'Delays' }, grid: { drawOnChartArea: false } },
+
+    if (trendChartType === 'pie') {
+      // A pie can't show a multi-day trend the way line/bar do - it
+      // shows a single moment instead of a series, so this uses the
+      // most recent day's split rather than forcing 20+ days of two
+      // metrics into slices that wouldn't mean anything meaningful.
+      const lastDate = dates[dates.length - 1];
+      const lastData = byDate[lastDate];
+      trendWrap.insertAdjacentHTML('beforebegin',
+        '<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">Pie view shows a single day\'s split, not a trend over time - most recent date: <strong>' + lastDate + '</strong>.</div>');
+      new Chart(document.getElementById('trendChart'), {
+        type: 'pie',
+        data: {
+          labels: ['Total Shipments', 'Delays'],
+          datasets: [{
+            data: [lastData.total, lastData.exceptions],
+            backgroundColor: ['#0f6b62', '#b3432f'],
+            borderColor: getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#fff',
+            borderWidth: 2,
+          }],
         },
-      },
-    });
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
+        },
+      });
+    } else {
+      // 'line' or 'bar' - same two-dataset, dual-axis shape either
+      // way; bar just needs a solid fill instead of a transparent one.
+      new Chart(document.getElementById('trendChart'), {
+        type: trendChartType,
+        data: {
+          labels: dates,
+          datasets: [
+            { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: trendChartType === 'bar' ? '#0f6b62' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { label: 'Delays', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: trendChartType === 'bar' ? '#b3432f' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'yExceptions' },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } },
+          scales: {
+            y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Total Shipments' } },
+            yExceptions: { beginAtZero: true, position: 'right', title: { display: true, text: 'Delays' }, grid: { drawOnChartArea: false } },
+          },
+        },
+      });
+    }
   }
   attachSnapshotButtons();
 }
