@@ -299,7 +299,7 @@ uploadFrame.addEventListener('load', () => {
 
   if (result && result.type === 'emailDrafts') {
     if (result.draftsCreated === 0) {
-      setActionStatus('No open exceptions right now - nothing to draft.', 'upload-status ok');
+      setActionStatus('No open delays right now - nothing to draft.', 'upload-status ok');
       return;
     }
     const summary = result.carriers.map(c => c.carrier + ': ' + c.count).join(', ');
@@ -641,7 +641,7 @@ function computePriorityPackages(shipments, limit) {
       score += 10;
       reasons.push('unassigned');
     }
-    if (reasons.length === 0) reasons.push(s['Issue Type'] || 'flagged exception');
+    if (reasons.length === 0) reasons.push(s['Issue Type'] || 'flagged delay');
 
     return { shipment: s, score: score, reason: reasons.join(', ') };
   });
@@ -824,7 +824,7 @@ function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
 
   sentences.push(
     `${b(total.toLocaleString())} shipments tracked${carriers.length > 1 ? ' across ' + carriers.join(' and ') : ''}, ` +
-    `with ${b(flagged.length)} open exception${flagged.length === 1 ? '' : 's'} (${b(exceptionRate + '%')}) needing follow-up.`
+    `with ${b(flagged.length)} open delay${flagged.length === 1 ? '' : 's'} (${b(exceptionRate + '%')}) needing follow-up.`
   );
 
   if (carriers.length > 1) {
@@ -836,14 +836,14 @@ function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
 
     if (most === worstRateCarrier) {
       sentences.push(
-        `${most} has both the most open exceptions (${b(byCarrier[most].exceptions)}) and the highest exception rate ` +
+        `${most} has both the most open delays (${b(byCarrier[most].exceptions)}) and the highest delay rate ` +
         `(${b((rates[most] * 100).toFixed(1) + '%')}) of the carriers tracked.`
       );
     } else {
       const countList = sorted.map(c => `${c}: ${b(byCarrier[c].exceptions)}`).join(', ');
       sentences.push(
-        `${most} has the most open exceptions in absolute terms (${countList}), though ${worstRateCarrier} has the ` +
-        `higher exception rate at ${b((rates[worstRateCarrier] * 100).toFixed(1) + '%')}.`
+        `${most} has the most open delays in absolute terms (${countList}), though ${worstRateCarrier} has the ` +
+        `higher delay rate at ${b((rates[worstRateCarrier] * 100).toFixed(1) + '%')}.`
       );
     }
   }
@@ -855,11 +855,11 @@ function buildSummaryText(total, flagged, atRisk, byCarrier, aging) {
     );
   } else if (aging.d3to5 > 0) {
     sentences.push(
-      `The oldest open exceptions are in the 3-5 day range (${b(aging.d3to5)} shipment${aging.d3to5 === 1 ? '' : 's'}) ` +
+      `The oldest open delays are in the 3-5 day range (${b(aging.d3to5)} shipment${aging.d3to5 === 1 ? '' : 's'}) ` +
       `- nothing has been open 6+ days yet.`
     );
   } else if (flagged.length > 0) {
-    sentences.push(`All open exceptions are still fairly recent - none have been open more than 2 days.`);
+    sentences.push(`All open delays are still fairly recent - none have been open more than 2 days.`);
   }
 
   if (atRisk.length > 0) {
@@ -1039,7 +1039,7 @@ document.getElementById('content').addEventListener('click', (e) => {
   const filterOptions = {
     total: { title: 'All Shipments', list: filteredShipments },
     noDelay: { title: 'No Delays', list: noDelay },
-    exceptions: { title: 'Open Exceptions', list: flagged },
+    exceptions: { title: 'Open Delays', list: flagged },
     atRisk: { title: 'At-Risk Deliveries', list: atRisk },
     delivered: { title: 'Delivered', list: delivered },
   };
@@ -1860,7 +1860,7 @@ function renderReportsView() {
     : (() => {
         return `
           <table>
-            <thead><tr><th>Date</th><th>Carrier</th><th>Total Shipments</th><th>Delivered</th><th>Exceptions</th><th>On-Time Rate</th></tr></thead>
+            <thead><tr><th>Date</th><th>Carrier</th><th>Total Shipments</th><th>Delivered</th><th>Delays</th><th>On-Time Rate</th></tr></thead>
             <tbody id="reportsTableBody"></tbody>
           </table>
         `;
@@ -2078,7 +2078,7 @@ function renderOverviewContent() {
     <div class="stats">
       <div class="stat-card" data-filter="total" title="Click to see all shipments"><div class="stat-label">Shipments Analyzed</div><div class="stat-value">${total}</div></div>
       <div class="stat-card" data-filter="noDelay" title="Click to see shipments with no delays"><div class="stat-label">No Delays</div><div class="stat-value">${noDelay}</div></div>
-      <div class="stat-card" data-filter="exceptions" title="Click to see open exceptions"><div class="stat-label">Open Exceptions</div><div class="stat-value">${flagged.length}</div></div>
+      <div class="stat-card" data-filter="exceptions" title="Click to see open delays"><div class="stat-label">Open Delays</div><div class="stat-value">${flagged.length}</div></div>
       <div class="stat-card" data-filter="atRisk" title="Click to see at-risk deliveries"><div class="stat-label">At-Risk Deliveries</div><div class="stat-value">${atRisk.length}</div></div>
       <div class="stat-card" data-filter="delivered" title="Click to see delivered shipments"><div class="stat-label">Delivered</div><div class="stat-value">${delivered.length}</div></div>
       <div class="stat-card" id="followupsStatCard" title="Click to view Follow-Ups"><div class="stat-label">Follow-Ups Needed Today</div><div class="stat-value">${followupsInFrame.length}</div></div>
@@ -2114,7 +2114,7 @@ function renderOverviewContent() {
         <div class="panel">
           <h2>Carrier Comparison</h2>
           <table>
-            <thead><tr><th>Carrier</th><th>Shipments</th><th>Exceptions</th><th>Exception Rate</th></tr></thead>
+            <thead><tr><th>Carrier</th><th>Shipments</th><th>Delays</th><th>Delay Rate</th></tr></thead>
             <tbody id="carrierTableBody"></tbody>
           </table>
         </div>
@@ -2125,7 +2125,7 @@ function renderOverviewContent() {
       </div>
 
       <div class="panel">
-        <h2>Trend (Total Shipments &amp; Exceptions)</h2>
+        <h2>Trend (Total Shipments &amp; Delays)</h2>
         <div class="chart-wrap" id="trendChartWrap"><canvas id="trendChart"></canvas></div>
       </div>
 
@@ -2268,7 +2268,7 @@ function renderOverviewContent() {
         labels: dates,
         datasets: [
           { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
-          { label: 'Exceptions', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'yExceptions' },
+          { label: 'Delays', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'yExceptions' },
         ],
       },
       options: {
@@ -2277,7 +2277,7 @@ function renderOverviewContent() {
         plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } },
         scales: {
           y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Total Shipments' } },
-          yExceptions: { beginAtZero: true, position: 'right', title: { display: true, text: 'Exceptions' }, grid: { drawOnChartArea: false } },
+          yExceptions: { beginAtZero: true, position: 'right', title: { display: true, text: 'Delays' }, grid: { drawOnChartArea: false } },
         },
       },
     });
