@@ -1876,6 +1876,47 @@ function getDeliveriesByDay() {
   return Object.values(map).sort((a, b) => b.dateObj - a.dateObj);
 }
 
+/**
+ * Counts actual NEW shipments per calendar day, by Ship Date -
+ * mirrors getDeliveriesByDay()'s approach but for outbound volume
+ * instead of completed deliveries. Used by the Trend chart's "Total
+ * Shipments" series, which previously pulled from Daily Snapshots'
+ * "Total Shipments" column - that column is the total row count in
+ * the whole Shipments sheet at the moment each sync ran (cumulative
+ * sheet size), NOT how many shipments actually went out that day, so
+ * every bar/line point was showing an ever-growing running total
+ * rather than daily volume. This computes the real thing instead.
+ *
+ * Keyed as 'M/d/yyyy' (no zero-padding) to match the date string
+ * format the backend's doGet() already formats Date cells into, so
+ * these counts line up with the same x-axis dates the Delays series
+ * (still correctly sourced from Daily Snapshots - see note below)
+ * already uses.
+ *
+ * NOTE: Delays intentionally stays sourced from Daily Snapshots'
+ * "Exceptions" column, unchanged - that's a genuine point-in-time
+ * snapshot of currently-open delays as of each sync, which correctly
+ * carries forward unresolved delays from previous days plus any new
+ * ones. Only Total Shipments had the wrong semantics.
+ *
+ * Known caveat: a handful of FedEx rows from before the Ship Date
+ * overwrite bug was fixed may still carry an incorrect Ship Date,
+ * which would show up here as volume on the wrong day for those
+ * specific shipments - a one-time cleanup pass (already on the
+ * roadmap) is the real fix for that, not something this function can
+ * detect or correct.
+ */
+function getShipmentsByShipDateKeyMap() {
+  const map = {};
+  allShipmentsCache.forEach(s => {
+    const d = parseShipDate(s);
+    if (!d) return;
+    const key = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
+    map[key] = (map[key] || 0) + 1;
+  });
+  return map;
+}
+
 function renderReportsView() {
   const container = document.getElementById('reportsView');
 
@@ -2291,6 +2332,7 @@ function renderOverviewContent() {
   // character, '1' < '2'), scrambling the x-axis out of chronological
   // order as soon as any day-of-month reached two digits.
   const dates = Object.keys(byDate).sort((a, b) => new Date(a) - new Date(b));
+  const shipmentsByShipDate = getShipmentsByShipDateKeyMap();
   const trendWrap = document.getElementById('trendChartWrap');
 
   const trendTypeSelect = document.getElementById('trendChartTypeSelect');
@@ -2318,6 +2360,7 @@ function renderOverviewContent() {
       // metrics into slices that wouldn't mean anything meaningful.
       const lastDate = dates[dates.length - 1];
       const lastData = byDate[lastDate];
+      const lastTotalShipped = shipmentsByShipDate[lastDate] || 0;
       trendWrap.insertAdjacentHTML('beforebegin',
         '<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">Pie view shows a single day\'s split, not a trend over time - most recent date: <strong>' + lastDate + '</strong>.</div>');
       new Chart(document.getElementById('trendChart'), {
@@ -2325,7 +2368,7 @@ function renderOverviewContent() {
         data: {
           labels: ['Total Shipments', 'Delays'],
           datasets: [{
-            data: [lastData.total, lastData.exceptions],
+            data: [lastTotalShipped, lastData.exceptions],
             backgroundColor: ['#0f6b62', '#b3432f'],
             borderColor: getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#fff',
             borderWidth: 2,
@@ -2345,7 +2388,7 @@ function renderOverviewContent() {
         data: {
           labels: dates,
           datasets: [
-            { label: 'Total Shipments', data: dates.map(d => byDate[d].total), borderColor: '#0f6b62', backgroundColor: trendChartType === 'bar' ? '#0f6b62' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { label: 'Total Shipments', data: dates.map(d => shipmentsByShipDate[d] || 0), borderColor: '#0f6b62', backgroundColor: trendChartType === 'bar' ? '#0f6b62' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
             { label: 'Delays', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: trendChartType === 'bar' ? '#b3432f' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'yExceptions' },
           ],
         },
