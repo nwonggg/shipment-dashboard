@@ -48,6 +48,8 @@
   .upload-status { font-size: 12.5px; }
   .upload-status.ok { color: var(--green); }
   .upload-status.err { color: var(--red); }
+  .upload-progress-bar-track { width: 140px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 8px; }
+  .upload-progress-bar-fill { height: 100%; background: var(--teal-500); width: 0%; transition: width 0.3s ease; }
   .config-box { display: none; margin-bottom: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
   .config-box.open { display: block; }
   .config-box input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; margin-top: 4px; }
@@ -239,8 +241,42 @@ const uploadFrame = document.getElementById('uploadFrame');
 const uploadStatus = document.getElementById('uploadStatus');
 let uploadFrameReady = false; // ignore the iframe's initial blank-page load event
 
+// ---- Upload progress countdown ----
+// There's no real byte-level progress signal once the form POST fires
+// (cross-origin iframe, same limitation as everywhere else in this
+// file), so this is an elapsed-time counter, not a true percentage.
+// It gives the operator a live "still working" signal instead of a
+// static, unchanging status line during longer uploads.
+let uploadTimerInterval = null;
+let uploadTimerStart = null;
+
+function startUploadTimer() {
+  uploadTimerStart = Date.now();
+  const fillEl = document.getElementById('uploadProgressFill');
+  const textEl = document.getElementById('uploadElapsedText');
+  clearInterval(uploadTimerInterval);
+  uploadTimerInterval = setInterval(() => {
+    const elapsedSec = Math.floor((Date.now() - uploadTimerStart) / 1000);
+    if (textEl) textEl.textContent = elapsedSec + 's elapsed';
+    // Indeterminate-ish fill: approaches 90% over ~20s and holds there
+    // until the real completion event arrives, rather than claiming a
+    // precise percentage we can't actually measure.
+    if (fillEl) {
+      const pct = Math.min(90, (elapsedSec / 20) * 90);
+      fillEl.style.width = pct + '%';
+    }
+  }, 250);
+}
+
+function stopUploadTimer() {
+  clearInterval(uploadTimerInterval);
+  uploadTimerInterval = null;
+}
+
 uploadFrame.addEventListener('load', () => {
   if (!uploadFrameReady) { uploadFrameReady = true; return; }
+
+  stopUploadTimer();
 
   function setActionStatus(text, cls) {
     const target = document.getElementById('emailStatus') || uploadStatus;
@@ -347,7 +383,11 @@ document.getElementById('submitCsvBtn').addEventListener('click', () => {
   reader.onload = () => {
     csvDataField.value = reader.result;
     uploadForm.action = workerUrl;
-    uploadStatus.textContent = 'Uploading and processing (may take a moment for large files)...';
+    uploadStatus.innerHTML =
+      '<span class="upload-progress-bar-track"><span class="upload-progress-bar-fill" id="uploadProgressFill"></span></span>' +
+      'Uploading and processing<span id="uploadElapsedText">... 0s elapsed</span>';
+    uploadStatus.className = 'upload-status';
+    startUploadTimer();
     uploadForm.submit();
     document.getElementById('uploadStep2').classList.remove('visible');
     csvFileInput.value = '';
@@ -478,6 +518,16 @@ document.addEventListener('change', (e) => {
   submitFieldUpdate(trackingNumber, 'Shipping Condition', value);
 });
 
+function formatLastUpdatedTimestamp(raw) {
+  if (!raw) return raw;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw; // fall back to the raw string if it isn't parseable
+  return d.toLocaleString(undefined, {
+    month: 'numeric', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+
 async function loadLastUpdated() {
   const workerUrl = workerUrlInput.value.trim();
   const lastUpdatedEl = document.getElementById('lastUpdated');
@@ -506,7 +556,7 @@ async function loadLastUpdated() {
 
     candidates.sort((a, b) => new Date(b.time) - new Date(a.time));
     const mostRecent = candidates[0];
-    lastUpdatedEl.innerHTML = 'Data last updated: <b>' + mostRecent.time + '</b> (' + mostRecent.source + ')';
+    lastUpdatedEl.innerHTML = 'Data last updated: <b>' + formatLastUpdatedTimestamp(mostRecent.time) + '</b> (' + mostRecent.source + ')';
   } catch (err) {
     lastUpdatedEl.textContent = '';
   }
