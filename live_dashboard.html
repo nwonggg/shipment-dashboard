@@ -33,6 +33,7 @@
   nav .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 13.5px; color: var(--sub); }
   .nav-item.active { background: var(--teal-100); color: var(--teal-900); font-weight: 600; }
   nav .nav-item { cursor: pointer; }
+  .nav-section-label { font-size: 10px; font-weight: 700; color: var(--sub); text-transform: uppercase; letter-spacing: 0.5px; margin: 18px 12px 6px; }
   main { padding: 24px 32px 60px; overflow-x: auto; }
   .topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
   h1 { font-size: 22px; margin: 0; }
@@ -126,6 +127,8 @@
       <div class="nav-item" data-view="exceptions">Delays</div>
       <div class="nav-item" data-view="shipments">Shipments</div>
       <div class="nav-item" data-view="reports">Reports</div>
+      <div class="nav-section-label">Work in Progress</div>
+      <div class="nav-item" data-view="wip">Aging, Trend &amp; DHL</div>
     </nav>
   </aside>
   <button id="sidebarToggle" title="Collapse sidebar">&#8249;</button>
@@ -203,6 +206,7 @@
     <div id="exceptionsView" style="display:none;"></div>
     <div id="followupsView" style="display:none;"></div>
     <div id="reportsView" style="display:none;"></div>
+    <div id="wipView" style="display:none;"></div>
   </main>
 </div>
 
@@ -1485,12 +1489,14 @@ function switchView(view) {
   document.getElementById('exceptionsView').style.display = view === 'exceptions' ? '' : 'none';
   document.getElementById('followupsView').style.display = view === 'followups' ? '' : 'none';
   document.getElementById('reportsView').style.display = view === 'reports' ? '' : 'none';
+  document.getElementById('wipView').style.display = view === 'wip' ? '' : 'none';
   hideDetailPanel();
 
   if (view === 'shipments') { shipmentsPage = 0; renderShipmentsView(); }
   if (view === 'exceptions') { exceptionsPage = 0; renderExceptionsView(); }
   if (view === 'followups') { followupsPage = 0; renderFollowupsView(); }
   if (view === 'reports') { renderReportsView(); }
+  if (view === 'wip') { renderWipView(); }
 }
 
 document.getElementById('sidebarToggle').addEventListener('click', () => {
@@ -1917,6 +1923,152 @@ function getShipmentsByShipDateKeyMap() {
   return map;
 }
 
+/**
+ * ============================================================
+ * WORK IN PROGRESS VIEW
+ * ============================================================
+ * Holds features not yet reliable enough for day-to-day operator
+ * use: Aging of Delays and Trend (moved out of Overview - see
+ * conversation 2026-09-22, the Delays trend surfaced a large
+ * genuine backlog that needs investigation before these are
+ * trustworthy at a glance), plus a DHL placeholder since that
+ * carrier isn't integrated yet.
+ *
+ * Deliberately NOT tied to Overview's time-frame filter - this is a
+ * separate, standalone section now, so Aging/Trend here always
+ * reflect the full current dataset regardless of what's selected on
+ * Overview.
+ * ============================================================
+ */
+function renderWipView() {
+  const container = document.getElementById('wipView');
+
+  const flagged = allShipmentsCache.filter(s => s['Needs Attention'] === true || s['Needs Attention'] === 'TRUE');
+  const total = allShipmentsCache.length;
+  const onTime = total - flagged.length;
+  const flaggedDays = flagged.map(s => Number(s['Days Delayed']) || 0);
+  const d1to2 = flaggedDays.filter(d => d <= 2).length;
+  const d3to5 = flaggedDays.filter(d => d >= 3 && d <= 5).length;
+  const d6plus = flaggedDays.filter(d => d >= 6).length;
+
+  container.innerHTML = `
+    <div class="panel no-snapshot" style="margin-bottom:16px;padding:12px 18px;">
+      <div style="font-size:12.5px;color:var(--sub);">
+        Work in progress - these aren't reliable enough for day-to-day use yet, kept here for testing rather than removed outright.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Aging of Delays</h2>
+      <div class="donut-wrap" id="agingChartWrap"><canvas id="agingChart"></canvas></div>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+        <h2 style="margin:0;">Trend (Total Shipments &amp; Delays)</h2>
+        <select id="trendChartTypeSelect" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--surface);color:var(--ink);">
+          <option value="line">Line</option>
+          <option value="bar">Bar</option>
+          <option value="pie">Pie</option>
+        </select>
+      </div>
+      <div class="chart-wrap" id="trendChartWrap"><canvas id="trendChart"></canvas></div>
+    </div>
+
+    <div class="panel">
+      <h2>DHL</h2>
+      <div class="empty-state">DHL isn't integrated yet - no parser, no API refresh, no data flowing into this dashboard for that carrier. Placeholder until that work starts.</div>
+    </div>
+  `;
+
+  new Chart(document.getElementById('agingChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['On Time', '1-2 Days', '3-5 Days', '6+ Days'],
+      datasets: [{ data: [onTime, d1to2, d3to5, d6plus], backgroundColor: ['#2b7a3c', '#c8862b', '#e2895a', '#b3432f'], borderColor: getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#fff', borderWidth: 2 }],
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10.5 } } } } },
+  });
+
+  const byDate = {};
+  snapshotsCache.forEach(s => {
+    const key = (s['Date'] || '').toString().trim();
+    if (!key) return;
+    if (!byDate[key]) byDate[key] = { total: 0, exceptions: 0 };
+    byDate[key].total += Number(s['Total Shipments']) || 0;
+    byDate[key].exceptions += Number(s['Exceptions']) || 0;
+  });
+  const dates = Object.keys(byDate).sort((a, b) => new Date(a) - new Date(b));
+  const shipmentsByShipDate = getShipmentsByShipDateKeyMap();
+  const trendWrap = document.getElementById('trendChartWrap');
+
+  const trendTypeSelect = document.getElementById('trendChartTypeSelect');
+  if (trendTypeSelect) {
+    trendTypeSelect.value = trendChartType;
+    trendTypeSelect.addEventListener('change', (e) => {
+      trendChartType = e.target.value;
+      localStorage.setItem('trendChartType', trendChartType);
+      renderWipView();
+    });
+  }
+
+  if (dates.length === 0) {
+    trendWrap.outerHTML = '<div class="empty-state" id="trendChartWrap">No snapshot history yet - this builds up automatically as syncDashboardData runs on future days.</div>';
+  } else {
+    if (dates.length === 1) {
+      trendWrap.insertAdjacentHTML('beforebegin',
+        '<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">Only 1 day of history so far - this chart becomes more useful as daily snapshots accumulate.</div>');
+    }
+
+    if (trendChartType === 'pie') {
+      const lastDate = dates[dates.length - 1];
+      const lastData = byDate[lastDate];
+      const lastTotalShipped = shipmentsByShipDate[lastDate] || 0;
+      trendWrap.insertAdjacentHTML('beforebegin',
+        '<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">Pie view shows a single day\'s split, not a trend over time - most recent date: <strong>' + lastDate + '</strong>.</div>');
+      new Chart(document.getElementById('trendChart'), {
+        type: 'pie',
+        data: {
+          labels: ['Total Shipments', 'Delays'],
+          datasets: [{
+            data: [lastTotalShipped, lastData.exceptions],
+            backgroundColor: ['#0f6b62', '#b3432f'],
+            borderColor: getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#fff',
+            borderWidth: 2,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
+        },
+      });
+    } else {
+      new Chart(document.getElementById('trendChart'), {
+        type: trendChartType,
+        data: {
+          labels: dates,
+          datasets: [
+            { label: 'Total Shipments', data: dates.map(d => shipmentsByShipDate[d] || 0), borderColor: '#0f6b62', backgroundColor: trendChartType === 'bar' ? '#0f6b62' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { label: 'Delays', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: trendChartType === 'bar' ? '#b3432f' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'yExceptions' },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } },
+          scales: {
+            y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Total Shipments' } },
+            yExceptions: { beginAtZero: true, position: 'right', title: { display: true, text: 'Delays' }, grid: { drawOnChartArea: false } },
+          },
+        },
+      });
+    }
+  }
+
+  attachSnapshotButtons();
+}
+
 function renderReportsView() {
   const container = document.getElementById('reportsView');
 
@@ -2178,30 +2330,12 @@ function renderOverviewContent() {
         <div id="priorityPackagesArea"></div>
       </div>
 
-      <div class="row2">
-        <div class="panel">
-          <h2>Carrier Comparison</h2>
-          <table>
-            <thead><tr><th>Carrier</th><th>Shipments</th><th>Delays</th><th>Delay Rate</th></tr></thead>
-            <tbody id="carrierTableBody"></tbody>
-          </table>
-        </div>
-        <div class="panel">
-          <h2>Aging of Delays</h2>
-          <div class="donut-wrap" id="agingChartWrap"><canvas id="agingChart"></canvas></div>
-        </div>
-      </div>
-
       <div class="panel">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-          <h2 style="margin:0;">Trend (Total Shipments &amp; Delays)</h2>
-          <select id="trendChartTypeSelect" style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--surface);color:var(--ink);">
-            <option value="line">Line</option>
-            <option value="bar">Bar</option>
-            <option value="pie">Pie</option>
-          </select>
-        </div>
-        <div class="chart-wrap" id="trendChartWrap"><canvas id="trendChart"></canvas></div>
+        <h2>Carrier Comparison</h2>
+        <table>
+          <thead><tr><th>Carrier</th><th>Shipments</th><th>Delays</th><th>Delay Rate</th></tr></thead>
+          <tbody id="carrierTableBody"></tbody>
+        </table>
       </div>
 
       <div class="panel">
@@ -2310,100 +2444,6 @@ function renderOverviewContent() {
     excBody.appendChild(tr);
   });
 
-  new Chart(document.getElementById('agingChart'), {
-    type: 'doughnut',
-    data: {
-      labels: ['On Time', '1-2 Days', '3-5 Days', '6+ Days'],
-      datasets: [{ data: [onTime, d1to2, d3to5, d6plus], backgroundColor: ['#2b7a3c', '#c8862b', '#e2895a', '#b3432f'], borderColor: getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#fff', borderWidth: 2 }],
-    },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10.5 } } } } },
-  });
-
-  const byDate = {};
-  snapshots.forEach(s => {
-    const key = (s['Date'] || '').toString().trim();
-    if (!key) return;
-    if (!byDate[key]) byDate[key] = { total: 0, exceptions: 0 };
-    byDate[key].total += Number(s['Total Shipments']) || 0;
-    byDate[key].exceptions += Number(s['Exceptions']) || 0;
-  });
-  // FIX: sort by actual date value, not as plain strings - a string
-  // sort put "9/10/2026" before "9/2/2026" (comparing character by
-  // character, '1' < '2'), scrambling the x-axis out of chronological
-  // order as soon as any day-of-month reached two digits.
-  const dates = Object.keys(byDate).sort((a, b) => new Date(a) - new Date(b));
-  const shipmentsByShipDate = getShipmentsByShipDateKeyMap();
-  const trendWrap = document.getElementById('trendChartWrap');
-
-  const trendTypeSelect = document.getElementById('trendChartTypeSelect');
-  if (trendTypeSelect) {
-    trendTypeSelect.value = trendChartType;
-    trendTypeSelect.addEventListener('change', (e) => {
-      trendChartType = e.target.value;
-      localStorage.setItem('trendChartType', trendChartType);
-      renderOverviewContent();
-    });
-  }
-
-  if (dates.length === 0) {
-    trendWrap.outerHTML = '<div class="empty-state" id="trendChartWrap">No snapshot history yet - this builds up automatically as syncDashboardData runs on future days.</div>';
-  } else {
-    if (dates.length === 1) {
-      trendWrap.insertAdjacentHTML('beforebegin',
-        '<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">Only 1 day of history so far - this chart becomes more useful as daily snapshots accumulate.</div>');
-    }
-
-    if (trendChartType === 'pie') {
-      // A pie can't show a multi-day trend the way line/bar do - it
-      // shows a single moment instead of a series, so this uses the
-      // most recent day's split rather than forcing 20+ days of two
-      // metrics into slices that wouldn't mean anything meaningful.
-      const lastDate = dates[dates.length - 1];
-      const lastData = byDate[lastDate];
-      const lastTotalShipped = shipmentsByShipDate[lastDate] || 0;
-      trendWrap.insertAdjacentHTML('beforebegin',
-        '<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">Pie view shows a single day\'s split, not a trend over time - most recent date: <strong>' + lastDate + '</strong>.</div>');
-      new Chart(document.getElementById('trendChart'), {
-        type: 'pie',
-        data: {
-          labels: ['Total Shipments', 'Delays'],
-          datasets: [{
-            data: [lastTotalShipped, lastData.exceptions],
-            backgroundColor: ['#0f6b62', '#b3432f'],
-            borderColor: getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#fff',
-            borderWidth: 2,
-          }],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
-        },
-      });
-    } else {
-      // 'line' or 'bar' - same two-dataset, dual-axis shape either
-      // way; bar just needs a solid fill instead of a transparent one.
-      new Chart(document.getElementById('trendChart'), {
-        type: trendChartType,
-        data: {
-          labels: dates,
-          datasets: [
-            { label: 'Total Shipments', data: dates.map(d => shipmentsByShipDate[d] || 0), borderColor: '#0f6b62', backgroundColor: trendChartType === 'bar' ? '#0f6b62' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
-            { label: 'Delays', data: dates.map(d => byDate[d].exceptions), borderColor: '#b3432f', backgroundColor: trendChartType === 'bar' ? '#b3432f' : 'transparent', borderWidth: 2, tension: 0.3, yAxisID: 'yExceptions' },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { position: 'top', align: 'start', labels: { boxWidth: 10, font: { size: 11 } } } },
-          scales: {
-            y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Total Shipments' } },
-            yExceptions: { beginAtZero: true, position: 'right', title: { display: true, text: 'Delays' }, grid: { drawOnChartArea: false } },
-          },
-        },
-      });
-    }
-  }
   attachSnapshotButtons();
 }
 
