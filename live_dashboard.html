@@ -20,7 +20,7 @@
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--paper); color: var(--ink); font-size: 14px; }
   .shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; position: relative; transition: grid-template-columns 0.2s ease; }
   .shell.sidebar-collapsed { grid-template-columns: 0px 1fr; }
-  aside { background: var(--surface); border-right: 1px solid var(--line); padding: 20px 14px; overflow-y: auto; overflow-x: hidden; white-space: nowrap; transition: padding 0.2s ease; position: sticky; top: 0; align-self: start; height: 100vh; }
+  aside { background: var(--surface); border-right: 1px solid var(--line); padding: 20px 14px; overflow-y: auto; overflow-x: hidden; white-space: nowrap; transition: padding 0.2s ease; position: sticky; top: 0; align-self: start; height: 100vh; display: flex; flex-direction: column; }
   .shell.sidebar-collapsed aside { padding: 20px 0; border-right: none; }
   #sidebarToggle { position: fixed; top: 50%; left: 220px; transform: translate(-50%, -50%); width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 17px; line-height: 1; display: flex; align-items: center; justify-content: center; z-index: 50; transition: left 0.2s ease; color: var(--sub); box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
   #sidebarToggle:hover { border-color: var(--teal-500); color: var(--teal-700); }
@@ -30,6 +30,7 @@
   body.dark .theme-toggle-knob { left: 23px; }
   .logo { font-weight: 700; letter-spacing: 2px; font-size: 15px; }
   .logo-sub { font-size: 9px; color: var(--teal-700); letter-spacing: 2px; margin-bottom: 28px; }
+  nav { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   nav .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 13.5px; color: var(--sub); }
   .nav-item.active { background: var(--teal-100); color: var(--teal-900); font-weight: 600; }
   nav .nav-item { cursor: pointer; }
@@ -81,6 +82,8 @@
   body.dark .exc-row-severe { background: #3f2620; }
   th[draggable="true"] { cursor: grab; user-select: none; }
   th[draggable="true"]:hover { background: var(--teal-100); }
+  .sticky-th { position: sticky; top: 0; background: var(--surface); z-index: 2; }
+  .carrier-table-scroll { overflow-x: auto; overflow-y: auto; max-height: 400px; border: 1px solid var(--line); border-radius: 8px; }
   th.drag-over-col { border-left: 2px solid var(--teal-700); }
   a.tracking-link { color: var(--teal-700); text-decoration: underline; }
   .inline-editable-date:hover { border-color: var(--teal-500); }
@@ -123,12 +126,15 @@
     <div class="logo">TWIST</div>
     <div class="logo-sub">BIOSCIENCE</div>
     <nav>
+      <div class="nav-section-label" style="margin-top:0;">Navigation</div>
       <div class="nav-item active" data-view="overview">Overview</div>
       <div class="nav-item" data-view="exceptions">Delays</div>
       <div class="nav-item" data-view="shipments">Shipments</div>
       <div class="nav-item" data-view="reports">Reports</div>
-      <div class="nav-section-label">Work in Progress</div>
-      <div class="nav-item" data-view="wip">Aging, Trend &amp; DHL</div>
+      <div style="margin-top:auto;">
+        <div class="nav-section-label">Work in Progress</div>
+        <div class="nav-item" data-view="wip">Aging, Trend &amp; DHL</div>
+      </div>
     </nav>
   </aside>
   <button id="sidebarToggle" title="Collapse sidebar">&#8249;</button>
@@ -1783,7 +1789,7 @@ function renderCarrierSplitTables(containerId, list, listLabel, sortState, onSor
     const sortKey = getColumnSortKey(col);
     const arrow = sortState && sortKey && sortState.col === sortKey ? (sortState.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
     const cursorStyle = sortKey ? 'cursor:pointer;' : 'cursor:grab;';
-    return `<th draggable="true" data-col-index="${i}" data-sort-key="${sortKey || ''}" style="${cursorStyle}">${col.label}${arrow}</th>`;
+    return `<th draggable="true" data-col-index="${i}" data-sort-key="${sortKey || ''}" class="sticky-th" style="${cursorStyle}">${col.label}${arrow}</th>`;
   };
 
   let html = '';
@@ -1797,7 +1803,10 @@ function renderCarrierSplitTables(containerId, list, listLabel, sortState, onSor
     } else if (carrierList.length === 0) {
       html += `<div class="empty-state">No ${carrier} ${listLabel.toLowerCase()} right now.</div>`;
     } else {
-      html += `<div style="overflow-x:auto;"><table>
+      // Fixed-height, independently scrollable per carrier (~10 rows
+      // visible, sticky header) so the boundary between carriers
+      // stays put visually instead of drifting with row count.
+      html += `<div class="carrier-table-scroll"><table>
         <thead><tr>${columns.map((col, i) => th(col, i)).join('')}</tr></thead>
         <tbody>${carrierList.map(s => `<tr class="${rowSeverityClass(s)}">${columns.map(col => `<td>${renderExceptionCell(col, s)}</td>`).join('')}</tr>`).join('')}</tbody>
       </table></div>`;
