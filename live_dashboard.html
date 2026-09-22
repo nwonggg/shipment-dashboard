@@ -65,14 +65,16 @@
   .panel-snapshot-btn:hover { border-color: var(--teal-500); color: var(--teal-700); }
   .panel h2 { font-size: 14px; margin: 0 0 14px; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th, td { text-align: left; padding: 8px 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .cell-truncate { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .carrier-table-scroll table { table-layout: fixed; }
+  th, td { text-align: left; padding: 7px 8px; }
   th { color: var(--sub); font-weight: 600; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--line); }
   tbody tr { border-bottom: 1px solid var(--line); }
   .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
-  .inline-editable-date { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 125px; }
-  .inline-editable-text { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 70px; }
-  .inline-editable-select { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 100px; }
+  .inline-editable-date { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 125px; max-width: 100%; }
+  .inline-editable-text { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 70px; max-width: 100%; }
+  .inline-editable-select { border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; font-size: 11.5px; background: var(--surface); color: var(--ink); width: 100px; max-width: 100%; }
   .exc-row-mild { background: #fdf6e8; }
   .exc-row-warn { background: #fbead8; }
   .exc-row-severe { background: #fbe2dc; }
@@ -1788,7 +1790,14 @@ function renderExceptionCell(col, s) {
     const tn = s['Tracking Number'] || '';
     return emailDraftButton(tn);
   }
-  return s[col.field] || '';
+  const raw = s[col.field];
+  if (raw === undefined || raw === null || raw === '') return '';
+  const text = raw.toString();
+  // Truncate rather than wrap - this is what was blowing up row
+  // height (long Issue Type / Action text wrapping across 8+ lines
+  // meant only 1-2 rows fit in the visible box at once). Full text
+  // still available on hover via the title attribute.
+  return `<span class="cell-truncate" title="${text.replace(/"/g, '&quot;')}">${text}</span>`;
 }
 
 function renderCarrierSplitTables(containerId, list, listLabel, sortState, onSortClick) {
