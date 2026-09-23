@@ -282,7 +282,7 @@ function startUploadTimer() {
   clearInterval(uploadTimerInterval);
   uploadTimerInterval = setInterval(() => {
     const elapsedSec = Math.floor((Date.now() - uploadTimerStart) / 1000);
-    if (textEl) textEl.textContent = elapsedSec + 's elapsed';
+    if (textEl) textEl.textContent = ' ' + elapsedSec + 's elapsed';
     // Indeterminate-ish fill: approaches 90% over ~20s and holds there
     // until the real completion event arrives, rather than claiming a
     // precise percentage we can't actually measure.
