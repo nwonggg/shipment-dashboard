@@ -272,23 +272,46 @@ let uploadFrameReady = false; // ignore the iframe's initial blank-page load eve
 // file), so this is an elapsed-time counter, not a true percentage.
 // It gives the operator a live "still working" signal instead of a
 // static, unchanging status line during longer uploads.
+//
+// FIX APPLIED (2026-09-23): previously this counted upward forever
+// with no acknowledgment that anything could be wrong - a request
+// that silently died server-side (e.g. exceeded Apps Script's ~6
+// minute Web App execution limit) looked identical to one still
+// genuinely working, indefinitely. Now escalates through two stages:
+// a soft warning once it's taking longer than normal, and an
+// explicit "this has likely failed" state once past Apps Script's
+// actual execution ceiling.
 let uploadTimerInterval = null;
 let uploadTimerStart = null;
+
+const UPLOAD_WARN_SEC = 60;          // "taking longer than usual" - still plausible
+const UPLOAD_LIKELY_FAILED_SEC = 350; // just under Apps Script's ~360s Web App limit
 
 function startUploadTimer() {
   uploadTimerStart = Date.now();
   const fillEl = document.getElementById('uploadProgressFill');
   const textEl = document.getElementById('uploadElapsedText');
+  const statusEl = document.getElementById('uploadStatus');
   clearInterval(uploadTimerInterval);
   uploadTimerInterval = setInterval(() => {
     const elapsedSec = Math.floor((Date.now() - uploadTimerStart) / 1000);
-    if (textEl) textEl.textContent = ' ' + elapsedSec + 's elapsed';
-    // Indeterminate-ish fill: approaches 90% over ~20s and holds there
-    // until the real completion event arrives, rather than claiming a
-    // precise percentage we can't actually measure.
-    if (fillEl) {
-      const pct = Math.min(90, (elapsedSec / 20) * 90);
-      fillEl.style.width = pct + '%';
+
+    if (elapsedSec >= UPLOAD_LIKELY_FAILED_SEC) {
+      if (textEl) textEl.textContent = ' ' + elapsedSec + 's elapsed - likely failed';
+      if (fillEl) { fillEl.style.width = '100%'; fillEl.style.background = 'var(--red)'; }
+      if (statusEl) statusEl.className = 'upload-status err';
+    } else if (elapsedSec >= UPLOAD_WARN_SEC) {
+      if (textEl) textEl.textContent = ' ' + elapsedSec + 's elapsed - taking longer than usual';
+      if (fillEl) { fillEl.style.width = '90%'; fillEl.style.background = 'var(--amber)'; }
+    } else {
+      if (textEl) textEl.textContent = ' ' + elapsedSec + 's elapsed';
+      // Indeterminate-ish fill: approaches 90% over ~20s and holds
+      // there until the real completion event arrives, rather than
+      // claiming a precise percentage we can't actually measure.
+      if (fillEl) {
+        const pct = Math.min(90, (elapsedSec / 20) * 90);
+        fillEl.style.width = pct + '%';
+      }
     }
   }, 250);
 }
@@ -296,6 +319,10 @@ function startUploadTimer() {
 function stopUploadTimer() {
   clearInterval(uploadTimerInterval);
   uploadTimerInterval = null;
+  // Reset the fill color for next time - otherwise a future upload
+  // would start already showing red/amber from a prior run's timeout.
+  const fillEl = document.getElementById('uploadProgressFill');
+  if (fillEl) fillEl.style.background = '';
 }
 
 uploadFrame.addEventListener('load', () => {
