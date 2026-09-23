@@ -264,7 +264,20 @@ const uploadForm = document.getElementById('uploadForm');
 const csvDataField = document.getElementById('csvDataField');
 const uploadFrame = document.getElementById('uploadFrame');
 const uploadStatus = document.getElementById('uploadStatus');
-let uploadFrameReady = false; // ignore the iframe's initial blank-page load event
+// FIX APPLIED (2026-09-23): previously used a fragile "ignore the
+// iframe's first load event" heuristic (assumed exactly one harmless
+// blank-page load fires before any real submission). If that
+// assumption didn't hold - timing varies by browser - the REAL
+// completion event got silently treated as the ignorable one, and
+// the result was never processed: the backend could finish in
+// seconds while the frontend's upload counter kept climbing forever,
+// since nothing ever told it the request was actually done. Replaced
+// with an explicit flag that's only true while a submission is
+// genuinely in flight - set right before every .submit() call that
+// targets this iframe (CSV upload, inline field edits), cleared the
+// moment its completion is processed. Can't get confused by how many
+// incidental load events fire, since it doesn't rely on counting them.
+let uploadInFlight = false;
 
 // ---- Upload progress countdown ----
 // There's no real byte-level progress signal once the form POST fires
@@ -326,7 +339,8 @@ function stopUploadTimer() {
 }
 
 uploadFrame.addEventListener('load', () => {
-  if (!uploadFrameReady) { uploadFrameReady = true; return; }
+  if (!uploadInFlight) return; // not a completion we're tracking - ignore
+  uploadInFlight = false;
 
   stopUploadTimer();
 
@@ -440,6 +454,7 @@ document.getElementById('submitCsvBtn').addEventListener('click', () => {
       'Uploading and processing<span id="uploadElapsedText">... 0s elapsed</span>';
     uploadStatus.className = 'upload-status';
     startUploadTimer();
+    uploadInFlight = true;
     uploadForm.submit();
     document.getElementById('uploadStep2').classList.remove('visible');
     csvFileInput.value = '';
@@ -486,6 +501,7 @@ function submitFieldUpdate(trackingNumber, field, value) {
   addField('field', field);
   addField('value', value);
   document.body.appendChild(form);
+  uploadInFlight = true;
   form.submit();
   setTimeout(() => form.remove(), 1000);
 }
