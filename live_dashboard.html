@@ -36,6 +36,7 @@
   .nav-item.active { background: var(--teal-100); color: var(--nav-active-text); font-weight: 600; }
   nav .nav-item { cursor: pointer; }
   .nav-section-label { font-size: 13.5px; font-weight: 700; color: var(--sub); text-transform: uppercase; letter-spacing: 0.5px; margin: 18px 12px 6px; }
+  .nav-badge { background: var(--red); color: white; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 10px; margin-left: auto; }
   main { padding: 24px 32px 60px; overflow-x: auto; }
   .topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
   h1 { font-size: 22px; margin: 0; }
@@ -143,6 +144,7 @@
     <nav>
       <div class="nav-section-label" style="margin-top:0;">Navigation</div>
       <div class="nav-item active" data-view="overview">Overview</div>
+      <div class="nav-item" data-view="followups">Follow-Ups <span class="nav-badge" id="followupsNavBadge" style="display:none;"></span></div>
       <div class="nav-item" data-view="exceptions">Delays</div>
       <div class="nav-item" data-view="shipments">Shipments</div>
       <div class="nav-item" data-view="reports">Reports</div>
@@ -1952,8 +1954,38 @@ function getFollowupsNeeded() {
   );
 }
 
+// Keeps the sidebar's live count visible regardless of which view is
+// currently open - a persistent signal of "how much is left," not
+// just a number you'd only see by clicking into the Follow-Ups tab.
+function updateFollowupsNavBadge() {
+  const badge = document.getElementById('followupsNavBadge');
+  if (!badge) return;
+  const count = getFollowupsNeeded().length;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = 'inline-block';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
 function renderFollowupsView() {
-  renderFilterableView('followupsView', 'followups', getFollowupsNeeded(), followupsPage, 'Follow-Ups Needed',
+  const container = document.getElementById('followupsView');
+  const remaining = getFollowupsNeeded().length;
+  container.innerHTML = `
+    <div class="panel no-snapshot" style="margin-bottom:14px;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+      <div>
+        <div style="font-size:16px;font-weight:700;">Follow-Ups</div>
+        <div style="font-size:12.5px;color:var(--sub);">Flagged shipments with no Next Action logged yet - this list shrinks as you work through it, and isn't affected by resyncs reordering rows.</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:28px;font-weight:700;color:${remaining === 0 ? 'var(--green)' : 'var(--red)'};line-height:1;">${remaining}</div>
+        <div style="font-size:11px;color:var(--sub);">remaining</div>
+      </div>
+    </div>
+    <div id="followupsInner"></div>
+  `;
+  renderFilterableView('followupsInner', 'followups', getFollowupsNeeded(), followupsPage, 'Follow-Ups',
     (p) => { followupsPage = p; renderFollowupsView(); },
     () => { followupsPage = 0; renderFollowupsView(); },
     (id, list, sortState, onSortClick) => renderCarrierSplitTables(id, list, 'Follow-Ups', sortState, onSortClick),
@@ -2340,6 +2372,8 @@ function renderDashboard(shipments, snapshots) {
 
   allShipmentsCache = shipments;
   snapshotsCache = snapshots;
+
+  updateFollowupsNavBadge();
 
   const carriersPresent = [...new Set(shipments.map(s => s['Carrier'] || 'Unknown'))].sort();
   document.getElementById('subtitleText').textContent =
